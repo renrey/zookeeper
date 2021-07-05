@@ -120,12 +120,14 @@ public class QuorumPeerMain {
     }
 
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
+        // 读取配置
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
             config.parse(args[0]);
         }
 
         // Start and schedule the the purge task
+        // 后台清理线程（日志、快照）
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(
             config.getDataDir(),
             config.getDataLogDir(),
@@ -226,8 +228,11 @@ public class QuorumPeerMain {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
 
+            // 启动节点核心线程！！！
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
+            // 当前启动线程等待quorumPeer线程，再执行
+            // 后面的操作就是关闭线程的处理
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok

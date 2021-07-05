@@ -381,6 +381,7 @@ public class QuorumCnxManager {
                 sock = SOCKET_FACTORY.get();
             }
             setSockOpts(sock);
+            // 发起socket连接
             sock.connect(electionAddr.getReachableOrOne(), cnxTO);
             if (sock instanceof SSLSocket) {
                 SSLSocket sslSock = (SSLSocket) sock;
@@ -404,6 +405,7 @@ public class QuorumCnxManager {
         }
 
         try {
+            // 开始通信
             startConnection(sock, sid);
         } catch (IOException e) {
             LOG.error(
@@ -427,6 +429,10 @@ public class QuorumCnxManager {
             return true;
         }
         try {
+            /**
+             * 启动连接线程
+             * @see QuorumConnectionReqThread#run()
+             */
             connectionExecutor.execute(new QuorumConnectionReqThread(electionAddr, sid));
             connectionThreadCnt.incrementAndGet();
         } catch (Throwable e) {
@@ -481,6 +487,10 @@ public class QuorumCnxManager {
             // understand the protocol version we use to avoid multiple partitions. see ZOOKEEPER-3720
             long protocolVersion = self.isMultiAddressEnabled() ? PROTOCOL_VERSION_V2 : PROTOCOL_VERSION_V1;
             dout.writeLong(protocolVersion);
+            /**
+             *
+             发送当前的myid
+             */
             dout.writeLong(self.getId());
 
             // now we send our election address. For the new protocol version, we can send multiple addresses.
@@ -491,6 +501,7 @@ public class QuorumCnxManager {
             String addr = addressesToSend.stream()
                     .map(NetUtils::formatInetAddr).collect(Collectors.joining("|"));
             byte[] addr_bytes = addr.getBytes();
+            // 发送地址
             dout.writeInt(addr_bytes.length);
             dout.write(addr_bytes);
             dout.flush();
@@ -510,10 +521,12 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
+        // 对方id > myid , 关闭现有的连接
         if (sid > self.getId()) {
             LOG.info("Have smaller server identifier, so dropping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             closeSocket(sock);
             // Otherwise proceed with the connection
+        // 正常处理
         } else {
             LOG.debug("Have larger server identifier, so keeping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             SendWorker sw = new SendWorker(sock, sid);
@@ -530,6 +543,9 @@ public class QuorumCnxManager {
 
             queueSendMap.putIfAbsent(sid, new CircularBlockingQueue<>(SEND_CAPACITY));
 
+            /**
+             * 启动SendWorker、RecvWorker
+             */
             sw.start();
             rw.start();
 
@@ -730,6 +746,7 @@ public class QuorumCnxManager {
         // we are doing connection initiation always asynchronously, since it is possible that
         // the socket connection timeouts or the SSL handshake takes too long and don't want
         // to keep the rest of the connections to wait
+        // 初始化socket连接
         return initiateConnectionAsync(electionAddr, sid);
     }
 
@@ -754,6 +771,7 @@ public class QuorumCnxManager {
             boolean knownId = false;
             // Resolve hostname for the remote server before attempting to
             // connect in case the underlying ip address has changed.
+            // 1. 进行socket连接
             self.recreateSocketAddresses(sid);
             Map<Long, QuorumPeer.QuorumServer> lastCommittedView = self.getView();
             QuorumVerifier lastSeenQV = self.getLastSeenQuorumVerifier();
@@ -761,6 +779,7 @@ public class QuorumCnxManager {
             if (lastCommittedView.containsKey(sid)) {
                 knownId = true;
                 LOG.debug("Server {} knows {} already, it is in the lastCommittedView", self.getId(), sid);
+                // 进行连接
                 if (connectOne(sid, lastCommittedView.get(sid).electionAddr)) {
                     return;
                 }
@@ -771,7 +790,7 @@ public class QuorumCnxManager {
                     || !lastProposedView.get(sid).electionAddr.equals(lastCommittedView.get(sid).electionAddr))) {
                 knownId = true;
                 LOG.debug("Server {} knows {} already, it is in the lastProposedView", self.getId(), sid);
-
+                // 进行连接
                 if (connectOne(sid, lastProposedView.get(sid).electionAddr)) {
                     return;
                 }
