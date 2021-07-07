@@ -166,8 +166,13 @@ public class QuorumPeerMain {
             ServerCnxnFactory cnxnFactory = null;
             ServerCnxnFactory secureCnxnFactory = null;
 
+            /**
+             * 服务端连接，与客户端的
+             */
             if (config.getClientPortAddress() != null) {
+                // 创建工厂
                 cnxnFactory = ServerCnxnFactory.createFactory();
+                // 初始化工厂！！！ 包含NIO
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
             }
 

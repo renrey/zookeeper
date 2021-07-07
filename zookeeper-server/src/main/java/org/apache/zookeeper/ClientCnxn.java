@@ -442,7 +442,15 @@ public class ClientCnxn {
     }
 
     public void start() {
+        /**
+         * 发送、通信线程
+         * @see org.apache.zookeeper.ClientCnxn.SendThread#run()
+         */
         sendThread.start();
+        /**
+         * 接收通信线程
+         * @see org.apache.zookeeper.ClientCnxn.EventThread#run()
+         */
         eventThread.start();
     }
 
@@ -1000,6 +1008,7 @@ public class ClientCnxn {
 
         /**
          * Setup session, previous watches, authentication.
+         * 创建session，监听
          */
         void primeConnection() throws IOException {
             LOG.info(
@@ -1143,6 +1152,7 @@ public class ClientCnxn {
             String hostPort = addr.getHostString() + ":" + addr.getPort();
             MDC.put("myid", hostPort);
             setName(getName().replaceAll("\\(.*\\)", "(" + hostPort + ")"));
+            // 鉴权
             if (clientConfig.isSaslClientEnabled()) {
                 try {
                     if (zooKeeperSaslClient != null) {
@@ -1163,7 +1173,9 @@ public class ClientCnxn {
                 }
             }
             logStartConnect(addr);
-
+            /**
+             * 创建socket
+             */
             clientCnxnSocket.connect(addr);
         }
 
@@ -1183,8 +1195,12 @@ public class ClientCnxn {
             long lastPingRwServer = Time.currentElapsedTime();
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             InetSocketAddress serverAddress = null;
+            // 未关闭连接
             while (state.isAlive()) {
                 try {
+                    /**
+                     * socket未建立，创建socket
+                     */
                     if (!clientCnxnSocket.isConnected()) {
                         // don't re-establish connection if we are closing
                         if (closing) {
@@ -1197,14 +1213,20 @@ public class ClientCnxn {
                             serverAddress = hostProvider.next(1000);
                         }
                         onConnecting(serverAddress);
+                        /**
+                         * 创建连接
+                         */
                         startConnect(serverAddress);
                         // Update now to start the connection timer right after we make a connection attempt
                         clientCnxnSocket.updateNow();
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
-
+                    /**
+                     * socket 已经建立，发送
+                     */
                     if (state.isConnected()) {
                         // determine whether we need to send an AuthFailed event.
+                        // 鉴权相关
                         if (zooKeeperSaslClient != null) {
                             boolean sendAuthEvent = false;
                             if (zooKeeperSaslClient.getSaslState() == ZooKeeperSaslClient.SaslState.INITIAL) {
@@ -1238,9 +1260,10 @@ public class ClientCnxn {
                         }
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
+                        // 计算剩余超时时间
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
-
+                    // 超时
                     if (to <= 0) {
                         String warnInfo = String.format(
                             "Client session timed out, have not heard from server in %dms for session id 0x%s",
@@ -1278,7 +1301,9 @@ public class ClientCnxn {
                         }
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
-
+                    /**
+                     * 发送报文！！！
+                     */
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {

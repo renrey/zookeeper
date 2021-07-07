@@ -42,7 +42,9 @@ import org.slf4j.LoggerFactory;
 public class ClientCnxnSocketNIO extends ClientCnxnSocket {
 
     private static final Logger LOG = LoggerFactory.getLogger(ClientCnxnSocketNIO.class);
-
+    /**
+     * 打开Selector
+     */
     private final Selector selector = Selector.open();
 
     private SelectionKey sockKey;
@@ -242,10 +244,10 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
      */
     SocketChannel createSock() throws IOException {
         SocketChannel sock;
-        sock = SocketChannel.open();
-        sock.configureBlocking(false);
+        sock = SocketChannel.open(); // 打开一个 SocketChannel
+        sock.configureBlocking(false); // 非堵塞
         sock.socket().setSoLinger(false, -1);
-        sock.socket().setTcpNoDelay(true);
+        sock.socket().setTcpNoDelay(true); // tcp no delay
         return sock;
     }
 
@@ -256,7 +258,9 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
      * @throws IOException
      */
     void registerAndConnect(SocketChannel sock, InetSocketAddress addr) throws IOException {
+        // 1. SocketChannel注册到Selector上，监听一个OP_CONNECT 建立连接事件
         sockKey = sock.register(selector, SelectionKey.OP_CONNECT);
+        // 2. 马上连接
         boolean immediateConnect = sock.connect(addr);
         if (immediateConnect) {
             sendThread.primeConnection();
@@ -265,6 +269,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
 
     @Override
     void connect(InetSocketAddress addr) throws IOException {
+        // 1. 打开一个 SocketChannel
         SocketChannel sock = createSock();
         try {
             registerAndConnect(sock, addr);
@@ -279,6 +284,8 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
          * Reset incomingBuffer
          */
         lenBuffer.clear();
+        // 3. 刚建立连接（初始，未有报文），incomingBuffer == lenBuffer
+        // 就是收到初始部分是数据的长度
         incomingBuffer = lenBuffer;
     }
 

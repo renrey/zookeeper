@@ -53,12 +53,14 @@ abstract class ClientCnxnSocket {
     /**
      * This buffer is only used to read the length of the incoming message.
      */
+    // 用于接收一开始传来数据的大小，由于解决粘包问题
     protected final ByteBuffer lenBuffer = ByteBuffer.allocateDirect(4);
 
     /**
      * After the length is read, a new incomingBuffer is allocated in
      * readLength() to receive the full message.
      */
+    // 用于接收数据包，一开始始数据大小，然后是数据包详细信息
     protected ByteBuffer incomingBuffer = lenBuffer;
     protected final AtomicLong sentCount = new AtomicLong(0L);
     protected final AtomicLong recvCount = new AtomicLong(0L);
