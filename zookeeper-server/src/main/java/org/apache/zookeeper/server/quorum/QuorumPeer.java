@@ -1140,6 +1140,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         }
         startLeaderElection();
         startJvmPauseMonitor();
+        /**
+         * @see QuorumPeer#run()
+         */
         super.start();
     }
 

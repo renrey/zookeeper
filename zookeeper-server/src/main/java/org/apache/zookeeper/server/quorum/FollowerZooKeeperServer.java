@@ -95,6 +95,11 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
         if ((request.zxid & 0xffffffffL) != 0) {
             pendingTxns.add(request);
         }
+        /**
+         * SyncRequestProcessor 写入日志-> SendAckRequestProcessor 发送ack
+         * @see SyncRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+         * @see SendAckRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+         */
         syncProcessor.processRequest(request);
     }
 

@@ -644,13 +644,14 @@ public class ZooKeeper implements AutoCloseable {
         // hostProvider后续可以随机从节点列表抽取一个进行请求
         this.hostProvider = hostProvider;
         ConnectStringParser connectStringParser = new ConnectStringParser(connectString);
-
+        // 创建与zk Server 的连接
         cnxn = createConnection(
             connectStringParser.getChrootPath(), // 可以配置节点地址，加上znode路径，/data ， chroot就是/data，然后每次执行都基于chroot执行
             hostProvider,
             sessionTimeout,
             this.clientConfig,
             watcher,
+            // 创建socket对象（不是连接）
             getClientCnxnSocket(),
             canBeReadOnly);
         //  ClientCnxn , 入口

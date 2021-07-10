@@ -65,7 +65,9 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
         try {
             while (!finished) {
                 ServerMetrics.getMetrics().LEARNER_REQUEST_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
-
+                /**
+                 * 阻塞
+                 */
                 Request request = queuedRequests.take();
                 if (LOG.isTraceEnabled()) {
                     ZooTrace.logRequest(LOG, ZooTrace.CLIENT_REQUEST_TRACE_MASK, 'F', request, "");
@@ -163,7 +165,9 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                     queuedRequests.add(upgradeRequest);
                 }
             }
-
+            /**
+             * @see FollowerRequestProcessor#run()
+             */
             queuedRequests.add(request);
         }
     }

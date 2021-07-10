@@ -120,6 +120,7 @@ public class Follower extends Learner {
                 }
                 // create a reusable packet to reduce gc impact
                 QuorumPacket qp = new QuorumPacket();
+                // 接收集群同步请求
                 while (this.isRunning()) {
                     readPacket(qp);
                     processPacket(qp);
@@ -159,6 +160,7 @@ public class Follower extends Learner {
         case Leader.PING:
             ping(qp);
             break;
+        // proposal
         case Leader.PROPOSAL:
             ServerMetrics.getMetrics().LEARNER_PROPOSAL_RECEIVED_COUNT.add(1);
             TxnLogEntry logEntry = SerializeUtils.deserializeTxn(qp.getData());
@@ -179,6 +181,7 @@ public class Follower extends Learner {
                 self.setLastSeenQuorumVerifier(qv, true);
             }
 
+            //记录日志、发送ack
             fzk.logRequest(hdr, txn, digest);
             if (hdr != null) {
                 /*

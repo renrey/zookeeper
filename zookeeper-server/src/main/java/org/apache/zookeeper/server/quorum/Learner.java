@@ -250,6 +250,10 @@ public class Learner {
             ServiceUtils.requestSystemExit(ExitCode.UNEXPECTED_ERROR.getValue());
         }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        /**
+         * 序列化的内容：
+         * sessionId+cxid+type
+         */
         DataOutputStream oa = new DataOutputStream(baos);
         oa.writeLong(request.sessionId);
         oa.writeInt(request.cxid);
