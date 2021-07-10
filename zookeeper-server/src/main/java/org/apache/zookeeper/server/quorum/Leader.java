@@ -926,6 +926,7 @@ public class Leader extends LearnerMaster {
         // in order to be committed, a proposal must be accepted by a quorum.
         //
         // getting a quorum from all necessary configurations.
+        // 是否已有多数ack（默认是否超过半数）
         if (!p.hasAllQuorums()) {
             return false;
         }
@@ -941,6 +942,7 @@ public class Leader extends LearnerMaster {
 
         outstandingProposals.remove(zxid);
 
+        // 加入toBeApplied, 待确认成功
         if (p.request != null) {
             toBeApplied.add(p);
         }
@@ -1039,9 +1041,9 @@ public class Leader extends LearnerMaster {
         if (ackLoggingFrequency > 0 && (zxid % ackLoggingFrequency == 0)) {
             p.request.logLatency(ServerMetrics.getMetrics().ACK_LATENCY, Long.toString(sid));
         }
-
+        // proposal 加入这个follower的ack （往ackset添加）
         p.addAck(sid);
-
+        // 尝试leader commit这个proposal
         boolean hasCommitted = tryToCommit(p, zxid, followerAddr);
 
         // If p is a reconfiguration, multiple other operations may be ready to be committed,
@@ -1099,7 +1101,7 @@ public class Leader extends LearnerMaster {
          */
         public void processRequest(Request request) throws RequestProcessorException {
             /**
-             * 先调用FinalRequestProcessor
+             * 先调用FinalRequestProcessor, 进行zk内部操作
              * @see org.apache.zookeeper.server.FinalRequestProcessor#processRequest
              */
             next.processRequest(request);
@@ -1113,6 +1115,7 @@ public class Leader extends LearnerMaster {
                 Iterator<Proposal> iter = leader.toBeApplied.iterator();
                 if (iter.hasNext()) {
                     Proposal p = iter.next();
+                    // 从toBeApplied删除当前请求处理
                     if (p.request != null && p.request.zxid == zxid) {
                         iter.remove();
                         return;
@@ -1277,7 +1280,9 @@ public class Leader extends LearnerMaster {
             LOG.debug("Proposing:: {}", request);
 
             lastProposed = p.packet.getZxid();
+            // outstandingProposals 存放proposal
             outstandingProposals.put(lastProposed, p);
+            // 把proposal发给每个follower
             sendPacket(pp);
         }
         ServerMetrics.getMetrics().PROPOSAL_COUNT.add(1);
@@ -1291,9 +1296,11 @@ public class Leader extends LearnerMaster {
      */
 
     public synchronized void processSync(LearnerSyncRequest r) {
+        // 给follower发送sync请求
         if (outstandingProposals.isEmpty()) {
             sendSync(r);
         } else {
+            // 加入pendingSyncs
             pendingSyncs.computeIfAbsent(lastProposed, k -> new ArrayList<>()).add(r);
         }
     }

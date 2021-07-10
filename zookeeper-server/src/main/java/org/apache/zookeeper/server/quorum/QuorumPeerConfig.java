@@ -636,6 +636,7 @@ public class QuorumPeerConfig {
 
 
     private static QuorumVerifier createQuorumVerifier(Properties dynamicConfigProp, boolean isHierarchical, String oraclePath) throws ConfigException {
+        // 默认为null
         if (oraclePath == null) {
             return createQuorumVerifier(dynamicConfigProp, isHierarchical);
         } else {
@@ -644,6 +645,7 @@ public class QuorumPeerConfig {
     }
 
     private static QuorumVerifier createQuorumVerifier(Properties dynamicConfigProp, boolean isHierarchical) throws ConfigException {
+        // 默认为false，即QuorumMaj 过半数
         if (isHierarchical) {
             return new QuorumHierarchical(dynamicConfigProp);
         } else {

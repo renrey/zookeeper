@@ -167,10 +167,14 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
     }
 
     protected boolean needCommit(Request request) {
+        // 默认false
         if (request.isThrottled()) {
           return false;
         }
         switch (request.type) {
+            /**
+             * 一般操作都是返回true
+             */
         case OpCode.create:
         case OpCode.create2:
         case OpCode.createTTL:
@@ -248,6 +252,10 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                  */
                 Request request;
                 int readsProcessed = 0;
+                /**
+                 * queuedRequests 取出
+                 *
+                 */
                 while (!stopped
                        && requestsToProcess > 0
                        && (maxReadBatchSize < 0 || readsProcessed <= maxReadBatchSize)
@@ -255,6 +263,10 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                     requestsToProcess--;
                     if (needCommit(request) || pendingRequests.containsKey(request.sessionId)) {
                         // Add request to pending
+                        /**
+                         * 加入到 pendingRequests的对应session的request queue中，
+                         * 其实就是下面的操作
+                         */
                         Deque<Request> requests = pendingRequests.computeIfAbsent(request.sessionId, sid -> new ArrayDeque<>());
                         requests.addLast(request);
                         ServerMetrics.getMetrics().REQUESTS_IN_SESSION_QUEUE.add(requests.size());
@@ -283,6 +295,9 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                         break;
                     }
                 }
+
+
+
                 ServerMetrics.getMetrics().READS_ISSUED_IN_COMMIT_PROC.add(readsProcessed);
 
                 if (!commitIsWaiting) {
@@ -327,6 +342,11 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                          * the first write queued in the blockedRequestQueue, we know this is
                          * a commit for a local write, as commits are received in order. Else
                          * it must be a commit for a remote write.
+                         */
+
+                        /**
+                         * queuedWriteRequests 取出（无删除）
+                         * 可以看到只是为了队头，做校验使用, 详细操作还是
                          */
                         if (!queuedWriteRequests.isEmpty()
                             && queuedWriteRequests.peek().sessionId == request.sessionId
@@ -374,6 +394,9 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                                 }
                                 // Only decrement if we take a request off the queue.
                                 numWriteQueuedRequests.decrementAndGet();
+                                /**
+                                 * queuedWriteRequests 删除
+                                 */
                                 queuedWriteRequests.poll();
                                 queuesToDrain.add(request.sessionId);
                             }
@@ -401,11 +424,21 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                      * empty.
                      */
                     readsProcessed = 0;
+                    /**
+                     *pendingRequests 处理
+                     */
                     for (Long sessionId : queuesToDrain) {
                         Deque<Request> sessionQueue = pendingRequests.get(sessionId);
                         int readsAfterWrite = 0;
                         while (!stopped && !sessionQueue.isEmpty() && !needCommit(sessionQueue.peek())) {
                             numReadQueuedRequests.decrementAndGet();
+                            /**
+                             * sessionQueue里所有request 都调用下一个Processor,
+                             * 注意这里是顺序执行！！！并且这个队列的都是写入操作
+                             * 一般是Leader.ToBeAppliedRequestProcessor -> finalProcessor
+                             * @see Leader.ToBeAppliedRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                             */
+                            // 其实是在本leader节点执行zk的操作处理
                             sendToNextProcessor(sessionQueue.poll());
                             readsAfterWrite++;
                         }
@@ -620,9 +653,18 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
         }
         LOG.debug("Processing request:: {}", request);
         request.commitProcQueueStartTime = Time.currentElapsedTime();
+        /**
+         * 加入queuedRequests
+         * @see org.apache.zookeeper.server.quorum.CommitProcessor#run()
+         */
         queuedRequests.add(request);
         // If the request will block, add it to the queue of blocking requests
+        // 一般都是true
         if (needCommit(request)) {
+            /**
+             * queuedWriteRequests
+             * @see org.apache.zookeeper.server.quorum.CommitProcessor#run()
+             */
             queuedWriteRequests.add(request);
             numWriteQueuedRequests.incrementAndGet();
         } else {

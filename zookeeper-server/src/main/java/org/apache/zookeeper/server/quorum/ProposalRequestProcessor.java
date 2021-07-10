@@ -49,6 +49,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
     public ProposalRequestProcessor(LeaderZooKeeperServer zks, RequestProcessor nextProcessor) {
         this.zks = zks;
         this.nextProcessor = nextProcessor;
+        // SyncRequestProcessor -> AckRequestProcessor
         AckRequestProcessor ackProcessor = new AckRequestProcessor(zks.getLeader());
         syncProcessor = new SyncRequestProcessor(zks, ackProcessor);
 
@@ -73,15 +74,31 @@ public class ProposalRequestProcessor implements RequestProcessor {
          * contain the handler. In this case, we add it to syncHandler, and
          * call processRequest on the next processor.
          */
+        // 同步给follower （learner），的请求
         if (request instanceof LearnerSyncRequest) {
             zks.getLeader().processSync((LearnerSyncRequest) request);
         } else {
+            // 默认true会执行
+            /**
+             * 先执行下一个, 一般为CommitProcessor
+             * @see CommitProcessor#processRequest(org.apache.zookeeper.server.Request)
+             */
             if (shouldForwardToNextProcessor(request)) {
                 nextProcessor.processRequest(request);
             }
+            /**
+             * 注意,CommitProcessor提交队列异步执行,此时是有两条分支：
+             * 1.CommitProcessor -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
+             *    这条分支做的是本节点的zk数据库处理
+             * 2. ProposalRequestProcessor（发送proposal给follower） -> syncProcessor（写入操作日志，刷盘，快照） -> AckRequestProcessor (处理ack响应)
+             *    这条分支负责proposal发布，proposal日志写入，ack响应处理 ，即同步相关的操作
+             */
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
                 try {
+                    /**
+                     * 发起proposal, 向其他follower同步
+                      */
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
@@ -99,6 +116,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
     }
 
     private boolean shouldForwardToNextProcessor(Request request) {
+        // 默认为false，即返回true
         if (!forwardLearnerRequestsToCommitProcessorDisabled) {
             return true;
         }

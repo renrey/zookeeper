@@ -20,6 +20,8 @@ package org.apache.zookeeper.server.quorum;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+
+import org.apache.zookeeper.server.quorum.flexible.QuorumMaj;
 import org.apache.zookeeper.server.quorum.flexible.QuorumVerifier;
 
 public class SyncedLearnerTracker {
@@ -33,6 +35,7 @@ public class SyncedLearnerTracker {
     public boolean addAck(Long sid) {
         boolean change = false;
         for (QuorumVerifierAcksetPair qvAckset : qvAcksetPairs) {
+            // 往ackSet添加
             if (qvAckset.getQuorumVerifier().getVotingMembers().containsKey(sid)) {
                 qvAckset.getAckset().add(sid);
                 change = true;
@@ -51,6 +54,10 @@ public class SyncedLearnerTracker {
     }
 
     public boolean hasAllQuorums() {
+        /**
+         * 默认是QuorumMaj ，过半数即可
+         * @see QuorumMaj#containsQuorum(java.util.Set)
+         */
         for (QuorumVerifierAcksetPair qvAckset : qvAcksetPairs) {
             if (!qvAckset.getQuorumVerifier().containsQuorum(qvAckset.getAckset())) {
                 return false;

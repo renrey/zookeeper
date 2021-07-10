@@ -123,11 +123,15 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
      * set, flush only when the relevant condition is hit.
      */
     private boolean shouldFlush() {
+        // 延迟时间，默认0无
         long flushDelay = zks.getFlushDelay();
+        // 一次执行的个数，默认1000
         long maxBatchSize = zks.getMaxBatchSize();
+        // 是否到时间
         if ((flushDelay > 0) && (getRemainingDelay() == 0)) {
             return true;
         }
+        // 大小是否够
         return (maxBatchSize > 0) && (toFlush.size() >= maxBatchSize);
     }
 
@@ -163,9 +167,14 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
 
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
+                // 先有限时获取
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
+
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
+                    /**
+                     * 万一超过pollTime没有集群同步（向其他节点）请求提交，直接flush刷盘
+                     */
                     flush();
                     /**
                      * 阻塞的地方
@@ -207,10 +216,20 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                             }.start();
                         }
                     }
+                // 这里是ack响应才会进来
                 } else if (toFlush.isEmpty()) {
                     // optimization for read heavy workloads
                     // iff this is a read or a throttled request(which doesn't need to be written to the disk),
                     // and there are no pending flushes (writes), then just pass this to the next processor
+                    /**
+                     * leaderZookeeperServer : AckRequestProcessor (上一个为ProposalRequestProcessor)
+                     *    主要处理接收到ack响应
+                     * ZookeeperServer： FinalRequestProcessor （上一个PrepRequestProcessor）
+                     *    主要写入zk数据库
+                     *
+                     * @see org.apache.zookeeper.server.quorum.AckRequestProcessor#processRequest
+                     * @see FinalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                     */
                     if (nextProcessor != null) {
                         nextProcessor.processRequest(si);
                         if (nextProcessor instanceof Flushable) {
@@ -219,10 +238,20 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     continue;
                 }
+                // toFlush (待刷盘队列) 加入
                 toFlush.add(si);
+                /**
+                 * 是否可以flush刷盘
+                 * 默认是toFlush数量等于1000
+                 */
                 if (shouldFlush()) {
                     flush();
                 }
+                /**
+                 * 因此，触发刷盘有2种情况：
+                 * 1. 连续进行1000条请求
+                 * 2. 超过polltime，没有请求提交
+                 */
                 ServerMetrics.getMetrics().SYNC_PROCESS_TIME.add(Time.currentElapsedTime() - startProcessTime);
             }
         } catch (Throwable t) {

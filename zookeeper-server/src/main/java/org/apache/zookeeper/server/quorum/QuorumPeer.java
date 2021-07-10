@@ -1554,6 +1554,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         updateServerState();
                     }
                     break;
+                // leader 角色
                 case LEADING:
                     LOG.info("LEADING");
                     try {
