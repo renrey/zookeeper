@@ -151,6 +151,7 @@ public class WorkerService {
                     workRequest.cleanup();
                     return;
                 }
+                // 执行操作
                 workRequest.doWork();
             } catch (Exception e) {
                 LOG.warn("Unexpected exception", e);

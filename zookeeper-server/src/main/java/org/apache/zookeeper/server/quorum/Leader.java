@@ -1098,6 +1098,10 @@ public class Leader extends LearnerMaster {
          * @see org.apache.zookeeper.server.RequestProcessor#processRequest(org.apache.zookeeper.server.Request)
          */
         public void processRequest(Request request) throws RequestProcessorException {
+            /**
+             * 先调用FinalRequestProcessor
+             * @see org.apache.zookeeper.server.FinalRequestProcessor#processRequest
+             */
             next.processRequest(request);
 
             // The only requests that should be on toBeApplied are write

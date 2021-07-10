@@ -86,6 +86,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
+                // 使用 syncProcessor 处理请求
                 syncProcessor.processRequest(request);
             }
         }

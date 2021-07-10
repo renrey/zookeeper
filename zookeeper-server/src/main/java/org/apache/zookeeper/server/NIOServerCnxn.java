@@ -173,22 +173,25 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /** Read the request payload (everything following the length prefix) */
     private void readPayload() throws IOException, InterruptedException, ClientCnxnLimitException {
+        // 未读完数据
         if (incomingBuffer.remaining() != 0) { // have we read length bytes?
             int rc = sock.read(incomingBuffer); // sock is non-blocking, so ok
             if (rc < 0) {
                 handleFailedRead();
             }
         }
-
+        // 读取完数据
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
             incomingBuffer.flip();
             packetReceived(4 + incomingBuffer.remaining());
             if (!initialized) {
                 readConnectRequest();
             } else {
+                // 读取解析正常请求，开始进行系统操作
                 readRequest();
             }
             lenBuffer.clear();
+            // 把incomingBuffer 重置为lenBuffer ， 下个报文也是先读前4位的长度报文
             incomingBuffer = lenBuffer;
         }
     }
@@ -327,21 +330,32 @@ public class NIOServerCnxn extends ServerCnxn {
 
                 return;
             }
+            // 接收信息
             if (k.isReadable()) {
+                /**
+                 * 第一次是lenbuffer，就是数据包的长度 ，前4位，为了解决粘包问题（头部传长度，再更加根据长度，读取指定长度的数据）
+                 *
+                 */
+                // 读取数据
                 int rc = sock.read(incomingBuffer);
                 if (rc < 0) {
                     handleFailedRead();
                 }
+                // incomingBuffer已全部写入
                 if (incomingBuffer.remaining() == 0) {
                     boolean isPayload;
+                    // 刚刚读取操作是读取长度
                     if (incomingBuffer == lenBuffer) { // start of next request
                         incomingBuffer.flip();
+                        // 判断是否大小符合要求
                         isPayload = readLength(k);
                         incomingBuffer.clear();
+                    // 刚刚读取数据，等于
                     } else {
                         // continuation
                         isPayload = true;
                     }
+                    // 已经把本次通信的所有数据包读取完
                     if (isPayload) { // not the case for 4letterword
                         readPayload();
                     } else {
@@ -351,6 +365,7 @@ public class NIOServerCnxn extends ServerCnxn {
                     }
                 }
             }
+            // 发送信息
             if (k.isWritable()) {
                 handleWrite(k);
 
@@ -554,7 +569,9 @@ public class NIOServerCnxn extends ServerCnxn {
             throw new IOException("ZooKeeperServer not running");
         }
         // checkRequestSize will throw IOException if request is rejected
+        // 校验报文大小，不超过100m
         zkServer.checkRequestSizeWhenReceivingMessage(len);
+        // 分配对应的长度的ByteBuffer
         incomingBuffer = ByteBuffer.allocate(len);
         return true;
     }

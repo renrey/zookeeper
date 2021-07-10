@@ -218,6 +218,10 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                 // Avoid sync if we have something to do
                 if (requestsToProcess == 0 && !commitIsWaiting) {
                     // Waiting for requests to process
+                    /**
+                     * 在这里阻塞等待有操作提交！！！
+                     * 后面的操作都会唤醒本次线程，进行提交处理
+                     */
                     synchronized (this) {
                         while (!stopped && requestsToProcess == 0 && !commitIsWaiting) {
                             wait();
@@ -306,6 +310,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                     Set<Long> queuesToDrain = new HashSet<>();
                     long startWriteTime = Time.currentElapsedTime();
                     int commitsProcessed = 0;
+                    // 待commit的操作
                     while (commitIsWaiting && !stopped && commitsToProcess > 0) {
 
                         // Process committed head
@@ -341,6 +346,9 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                             } else {
                                 ServerMetrics.getMetrics().REQUESTS_IN_SESSION_QUEUE.add(sessionQueue.size());
                                 // If session queue != null, then it is also not empty.
+                                /**
+                                 * commit操作的Request对象
+                                 */
                                 Request topPending = sessionQueue.poll();
                                 /*
                                  * Generally, we want to send to the next processor our version of the request,
@@ -358,6 +366,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                                 topPending.setTxnDigest(request.getTxnDigest());
                                 topPending.zxid = request.zxid;
                                 topPending.commitRecvTime = request.commitRecvTime;
+                                // request设为toPengding
                                 request = topPending;
                                 if (request.isThrottled()) {
                                     LOG.error("Throttled request in committed & pending pool: {}. Exiting.", request);
@@ -378,6 +387,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                         commitsProcessed++;
 
                         // Process the write inline.
+                        // 处理写入操作！！！
                         processWrite(request);
 
                         commitIsWaiting = !committedRequests.isEmpty();
@@ -474,6 +484,10 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
         processCommitMetrics(request, true);
 
         long timeBeforeFinalProc = Time.currentElapsedTime();
+        /**
+         * ToBeAppliedRequestProcessor
+         * @see Leader.ToBeAppliedRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+         */
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().WRITE_FINAL_PROC_TIME.add(Time.currentElapsedTime() - timeBeforeFinalProc);
     }

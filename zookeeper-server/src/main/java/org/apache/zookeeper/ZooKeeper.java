@@ -2686,6 +2686,7 @@ public class ZooKeeper implements AutoCloseable {
         SyncRequest request = new SyncRequest();
         SyncResponse response = new SyncResponse();
         request.setPath(serverPath);
+        // 需要给客户端发送sync请求
         cnxn.queuePacket(h, new ReplyHeader(), request, response, cb, clientPath, serverPath, ctx, null);
     }
 

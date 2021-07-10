@@ -78,6 +78,10 @@ import org.apache.zookeeper.server.SessionTracker.SessionExpirer;
 import org.apache.zookeeper.server.auth.ProviderRegistry;
 import org.apache.zookeeper.server.auth.ServerAuthenticationProvider;
 import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
+import org.apache.zookeeper.server.quorum.CommitProcessor;
+import org.apache.zookeeper.server.quorum.Leader;
+import org.apache.zookeeper.server.quorum.LeaderRequestProcessor;
+import org.apache.zookeeper.server.quorum.ProposalRequestProcessor;
 import org.apache.zookeeper.server.quorum.QuorumPeerConfig;
 import org.apache.zookeeper.server.quorum.ReadOnlyZooKeeperServer;
 import org.apache.zookeeper.server.util.JvmPauseMonitor;
@@ -290,6 +294,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
      * {@link requestFinished(Request)} method which performs the decrement if
      * needed.
      */
+    // 报文上限100m
     private volatile int largeRequestMaxBytes = 100 * 1024 * 1024;
 
     /**
@@ -742,6 +747,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     protected void setupRequestProcessors() {
+        // PrepRequestProcessor -> syncProcessor -> finalProcessor
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
         RequestProcessor syncProcessor = new SyncRequestProcessor(this, finalProcessor);
         ((SyncRequestProcessor) syncProcessor).start();
@@ -1159,10 +1165,26 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
         }
         try {
+            // 1. 更新连接超时、session超时
             touch(si.cnxn);
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
                 setLocalSessionFlag(si);
+                /**
+                 * 2. PrepRequestProcessor 处理请求
+                 * 调用链：PrepRequestProcessor -> syncProcessor -> finalProcessor
+                 *
+                 *  Leader : LeaderRequestProcessor ->PrepRequestProcessor -> ProposalRequestProcessor ->
+                 *    CommitProcessor -> ToBeAppliedRequestProcessor ->finalProcessor
+                 * @see org.apache.zookeeper.server.PrepRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see org.apache.zookeeper.server.SyncRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see FinalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 *
+                 * @see LeaderRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see ProposalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see CommitProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see Leader.ToBeAppliedRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 */
                 firstProcessor.processRequest(si);
                 if (si.cnxn != null) {
                     incInProcess();
@@ -1594,8 +1616,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     public void processPacket(ServerCnxn cnxn, ByteBuffer incomingBuffer) throws IOException {
         // We have the request, now process and setup for next
+        // 反序列化请求
         InputStream bais = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bia = BinaryInputArchive.getArchive(bais);
+
+        // 获取header
         RequestHeader h = new RequestHeader();
         h.deserialize(bia, "header");
 
@@ -1614,6 +1639,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // pointing
         // to the start of the txn
         incomingBuffer = incomingBuffer.slice();
+        // 鉴权
         if (h.getType() == OpCode.auth) {
             LOG.info("got auth packet {}", cnxn.getRemoteSocketAddress());
             AuthPacket authPacket = new AuthPacket();
@@ -1656,8 +1682,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 cnxn.disableRecv();
             }
             return;
+        // sasl登录
         } else if (h.getType() == OpCode.sasl) {
             processSasl(incomingBuffer, cnxn, h);
+        // 正常操作处理
         } else {
             if (!authHelper.enforceAuthentication(cnxn, h.getXid())) {
                 // Authentication enforcement is failed
@@ -1672,6 +1700,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     si.setLargeRequestSize(length);
                 }
                 si.setOwner(ServerCnxn.me);
+                // 提交Request ，入队
                 submitRequest(si);
             }
         }
@@ -1786,6 +1815,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             return new ProcessTxnResult();
         }
         synchronized (outstandingChanges) {
+            /**
+             * 1. 写入内存数据库！！！
+             */
             ProcessTxnResult rc = processTxnInDB(hdr, request.getTxn(), request.getTxnDigest());
 
             // request.hdr is set for write requests, which are the only ones
@@ -1809,6 +1841,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
 
             // do not add non quorum packets to the queue.
+            /**
+             *  2. 新增commit 日志 （已commit 的 与最后commit的）
+             */
             if (quorumRequest) {
                 getZKDatabase().addCommittedProposal(request);
             }

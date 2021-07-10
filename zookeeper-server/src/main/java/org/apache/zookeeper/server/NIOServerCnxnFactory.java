@@ -264,6 +264,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             boolean accepted = false;
             SocketChannel sc = null;
             try {
+                // 对应连接的socketchannel, 新的不是ServerSocketChannel
                 sc = acceptSocket.accept();
                 accepted = true;
                 if (limitTotalNumberOfCnxns()) {
@@ -375,9 +376,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             try {
                 while (!stopped) {
                     try {
-                        // select 堵塞监听
+                        // 本线程的selector堵塞监听通信（非建立连接），
+                        // 注意：第一次不会堵塞（由于没注册事件）
                         select();
-                        // 处理通信事件
+                        /**
+                         * 从acceptedQueue获取所有建立连接事件，处理所有建立连接：
+                         * 在本线程的selector注册对应channel的事件，并创建对应的NIOServerCnxn
+                         */
                         processAcceptedConnections();
                         processInterestOpsUpdateRequests();
                     } catch (RuntimeException e) {
@@ -428,8 +433,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                         cleanupSelectionKey(key);
                         continue;
                     }
-                    // 可读或可写
+                    // 可读或可写(正常通信)
                     if (key.isReadable() || key.isWritable()) {
+                        // 处理io报文
                         handleIO(key);
                     } else {
                         LOG.warn("Unexpected ops in select {}", key.readyOps());
@@ -446,7 +452,10 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * I/O is run directly by this thread.
          */
         private void handleIO(SelectionKey key) {
-            // IOWorkRequest
+            /**
+             * 为当前事件，创建一个处理任务IOWorkRequest
+             * @see WorkerService.ScheduledWorkRequest#run()
+             */
             IOWorkRequest workRequest = new IOWorkRequest(this, key);
             NIOServerCnxn cnxn = (NIOServerCnxn) key.attachment();
 
@@ -455,6 +464,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             cnxn.disableSelectable();
             key.interestOps(0);
             touchCnxn(cnxn);
+            // 提交任务
             workerPool.schedule(workRequest);
         }
 
@@ -465,8 +475,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         private void processAcceptedConnections() {
             SocketChannel accepted;
             /**
-             * 等于给所有已建立的连接channel，注册监听
-             * 创建对应的NIOServerCnxn连接对象
+             * 所有已建立的连接channel，注册监听
+             * 并且创建连接对应的NIOServerCnxn
              */
             // 从acceptedQueue消费所有
             while (!stopped && (accepted = acceptedQueue.poll()) != null) {
@@ -522,13 +532,15 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
 
         public void doWork() throws InterruptedException {
+            // 非法操作
             if (!key.isValid()) {
                 selectorThread.cleanupSelectionKey(key);
                 return;
             }
 
+            // 普通通信
             if (key.isReadable() || key.isWritable()) {
-                // IO报文处理
+                // 对应连接的NIOServerCnxn执行IO报文处理
                 cnxn.doIO(key);
 
                 // Check if we shutdown or doIO() closed this connection
@@ -852,6 +864,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         set.add(cnxn);
 
         cnxns.add(cnxn);
+        // 更新过期时间
         touchCnxn(cnxn);
     }
 

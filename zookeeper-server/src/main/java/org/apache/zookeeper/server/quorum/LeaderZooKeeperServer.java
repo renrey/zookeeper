@@ -63,13 +63,22 @@ public class LeaderZooKeeperServer extends QuorumZooKeeperServer {
 
     @Override
     protected void setupRequestProcessors() {
+        /**
+         * LeaderRequestProcessor ->PrepRequestProcessor -> ProposalRequestProcessor ->
+         * CommitProcessor -> ToBeAppliedRequestProcessor ->finalProcessor
+         *
+         */
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
         RequestProcessor toBeAppliedProcessor = new Leader.ToBeAppliedRequestProcessor(finalProcessor, getLeader());
         commitProcessor = new CommitProcessor(toBeAppliedProcessor, Long.toString(getServerId()), false, getZooKeeperServerListener());
+        // commit线程
         commitProcessor.start();
+
         ProposalRequestProcessor proposalProcessor = new ProposalRequestProcessor(this, commitProcessor);
+        // syncProcessor 线程
         proposalProcessor.initialize();
         prepRequestProcessor = new PrepRequestProcessor(this, proposalProcessor);
+        // pre线程
         prepRequestProcessor.start();
         firstProcessor = new LeaderRequestProcessor(this, prepRequestProcessor);
 

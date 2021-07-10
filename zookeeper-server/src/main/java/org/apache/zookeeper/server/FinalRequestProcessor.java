@@ -109,6 +109,7 @@ public class FinalRequestProcessor implements RequestProcessor {
     }
 
     private ProcessTxnResult applyRequest(Request request) {
+        // 处理
         ProcessTxnResult rc = zks.processTxn(request);
 
         // ZOOKEEPER-558:
@@ -155,6 +156,9 @@ public class FinalRequestProcessor implements RequestProcessor {
             ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
         }
         ProcessTxnResult rc = null;
+        /**
+         * 1. 处理请求，写入zk内存数据库
+         */
         if (!request.isThrottled()) {
           rc = applyRequest(request);
         }
@@ -210,7 +214,9 @@ public class FinalRequestProcessor implements RequestProcessor {
             }
 
             AuditHelper.addAuditLog(request, rc);
-
+            /**
+             * 1. 不同操作的处理
+             */
             switch (request.type) {
             case OpCode.ping: {
                 lastOp = "PING";
@@ -297,6 +303,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 }
                 break;
             }
+            // 新增
             case OpCode.create: {
                 lastOp = "CREA";
                 rsp = new CreateResponse(rc.path);
@@ -601,12 +608,19 @@ public class FinalRequestProcessor implements RequestProcessor {
             err = Code.MARSHALLINGERROR;
         }
 
+        /**
+         * 2. 包装响应
+         */
         ReplyHeader hdr = new ReplyHeader(request.cxid, lastZxid, err.intValue());
 
         updateStats(request, lastOp, lastZxid);
 
+        /**
+         * 3. 发送给客户端
+         */
         try {
             if (path == null || rsp == null) {
+
                 responseSize = cnxn.sendResponse(hdr, rsp, "response");
             } else {
                 int opCode = request.type;

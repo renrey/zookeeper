@@ -143,7 +143,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 if (killed) {
                     break;
                 }
-
+                // 提出Request
                 Request request = submittedRequests.take();
                 if (Request.requestOfDeath == request) {
                     break;
@@ -185,6 +185,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                       request.setIsThrottled(true);
                       ServerMetrics.getMetrics().THROTTLED_OPS.add(1);
                     }
+                    // 开始处理Request
                     zks.submitRequestNow(request);
                 }
             }
@@ -243,6 +244,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
         if (stopping) {
             LOG.debug("Shutdown in progress. Request cannot be processed");
             dropRequest(request);
+        // submittedRequests入队
         } else {
             request.requestThrottleQueueTime = Time.currentElapsedTime();
             submittedRequests.add(request);

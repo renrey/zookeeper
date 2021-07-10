@@ -167,6 +167,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
                     flush();
+                    /**
+                     * 阻塞的地方
+                      */
                     si = queuedRequests.take();
                 }
 
@@ -178,6 +181,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
+                /**
+                 * org.apache.zookeeper.server.ZKDatabase#append(org.apache.zookeeper.server.Request)
+                 * append 新增日志
+                  */
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
@@ -274,6 +281,11 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         Objects.requireNonNull(request, "Request cannot be null");
 
         request.syncQueueStartTime = Time.currentElapsedTime();
+
+        /**
+         * 加入自己队列中,等待自己的线程执行
+         * @see SyncRequestProcessor#run()
+         */
         queuedRequests.add(request);
         ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUED.add(1);
     }

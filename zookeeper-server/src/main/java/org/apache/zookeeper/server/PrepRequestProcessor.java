@@ -139,6 +139,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         try {
             while (true) {
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_SIZE.add(submittedRequests.size());
+                /**
+                 * 阻塞的地方
+                 */
                 Request request = submittedRequests.take();
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_TIME
                     .add(Time.currentElapsedTime() - request.prepQueueStartTime);
@@ -154,6 +157,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 }
 
                 request.prepStartTime = Time.currentElapsedTime();
+                // pre处理Request
                 pRequest(request);
             }
         } catch (Exception e) {
@@ -775,6 +779,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.setHdr(null);
         request.setTxn(null);
 
+        // 设置header 和 txn
         if (!request.isThrottled()) {
           pRequestHelper(request);
         }
@@ -782,6 +787,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.zxid = zks.getZxid();
         long timeFinishedPrepare = Time.currentElapsedTime();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
+        // 下一个处理器
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
     }
@@ -925,6 +931,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             case OpCode.multiRead:
             case OpCode.addWatch:
             case OpCode.whoAmI:
+                // 校验session
                 zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
                 break;
             default:
@@ -1064,6 +1071,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
 
     public void processRequest(Request request) {
         request.prepQueueStartTime = Time.currentElapsedTime();
+        /**
+         * 加入自己队列中,等待自己的线程执行
+         * @see PrepRequestProcessor#run()
+         */
         submittedRequests.add(request);
         ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUED.add(1);
     }
