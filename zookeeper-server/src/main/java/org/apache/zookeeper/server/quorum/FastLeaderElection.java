@@ -229,12 +229,16 @@ public class FastLeaderElection implements Election {
                 this.manager = manager;
             }
 
+            /**
+             * 选举的网络通信线程，负责发送、接收请求
+             */
             public void run() {
 
                 Message response;
                 while (!stop) {
                     // Sleeps on receive
                     try {
+                        // QuorumCnxManager的recvQueue 有限时堵塞获取响应
                         response = manager.pollRecvQueue(3000, TimeUnit.MILLISECONDS);
                         if (response == null) {
                             continue;
@@ -491,6 +495,9 @@ public class FastLeaderElection implements Election {
                 this.manager = manager;
             }
 
+            /**
+             * 发送请求
+             */
             public void run() {
                 while (!stop) {
                     try {
@@ -514,7 +521,9 @@ public class FastLeaderElection implements Election {
              */
             void process(ToSend m) {
                 ByteBuffer requestBuffer = buildMsg(m.state.ordinal(), m.leader, m.zxid, m.electionEpoch, m.peerEpoch, m.configData);
-
+                /**
+                 * 实际是调用QuorumCnxManager来发送
+                 */
                 manager.toSend(m.sid, requestBuffer);
 
             }
@@ -712,7 +721,11 @@ public class FastLeaderElection implements Election {
                 sid,
                 self.getId(),
                 Long.toHexString(proposedEpoch));
-            // 投票操作 加入sendqueue
+            // 发送请求 加入sendqueue
+            /**
+             * WorkerSender负责消费
+             * @see org.apache.zookeeper.server.quorum.FastLeaderElection.Messenger.WorkerSender#run()
+             */
             sendqueue.offer(notmsg);
         }
     }
@@ -952,7 +965,7 @@ public class FastLeaderElection implements Election {
                 "New election. My id = {}, proposed zxid=0x{}",
                 self.getId(),
                 Long.toHexString(proposedZxid));
-            // 发起投票
+            // 向每个选举的节点发送投票请求
             sendNotifications();
 
             SyncedLearnerTracker voteSet = null;
@@ -960,11 +973,15 @@ public class FastLeaderElection implements Election {
             /*
              * Loop in which we exchange notifications until we find a leader
              */
-
+            // 一直循环(LOOKING)，直到选出leader，
             while ((self.getPeerState() == ServerState.LOOKING) && (!stop)) {
                 /*
                  * Remove next notification from queue, times out after 2 times
                  * the termination time
+                 */
+                /**
+                 * 有限时阻塞从recvqueue获取响应
+                 * @see Messenger.WorkerReceiver#run()
                  */
                 Notification n = recvqueue.poll(notTimeout, TimeUnit.MILLISECONDS);
 

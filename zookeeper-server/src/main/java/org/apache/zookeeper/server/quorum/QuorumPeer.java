@@ -1138,6 +1138,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         } catch (AdminServerException e) {
             LOG.warn("Problem starting AdminServer", e);
         }
+        // 初始化leader选举的组件
         startLeaderElection();
         startJvmPauseMonitor();
         /**
@@ -1360,6 +1361,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         case 2:
             throw new UnsupportedOperationException("Election Algorithm 2 is not supported.");
         case 3:
+        	// 创建选举连接管理器
             QuorumCnxManager qcm = createCnxnManager();
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
@@ -1374,6 +1376,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                  */
                 listener.start();
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);
+                /**
+                 * 启动messenger
+                 * @see FastLeaderElection.Messenger.WorkerReceiver#run()
+                 */
                 fle.start();
                 le = fle;
             } else {
@@ -1461,10 +1467,11 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
                 // 根据当前节点的状态判断操作
                 switch (getPeerState()) {
+                    // 寻找leader的状态
                 case LOOKING:
                     LOG.info("LOOKING");
                     ServerMetrics.getMetrics().LOOKING_COUNT.add(1);
-
+                    // 只读模式
                     if (Boolean.getBoolean("readonlymode.enabled")) {
                         LOG.info("Attempting to start ReadOnlyZooKeeperServer");
 
@@ -1511,13 +1518,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                             roZkMgr.interrupt();
                             roZk.shutdown();
                         }
+                    // 正常模式
                     } else {
                         try {
                             reconfigFlagClear();
+                            // 重新初始化选举组件
                             if (shuttingDownLE) {
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            // lookForLeader 投票选出leader，
+                            // setCurrentVote 保存本机最新的选票
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);

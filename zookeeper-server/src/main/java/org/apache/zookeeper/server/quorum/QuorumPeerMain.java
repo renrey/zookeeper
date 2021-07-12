@@ -234,6 +234,9 @@ public class QuorumPeerMain {
             }
 
             // 启动节点核心线程！！！
+            /**
+             * @see org.apache.zookeeper.server.quorum.QuorumPeer#run()
+             */
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
             // 当前启动线程等待quorumPeer线程，再执行
