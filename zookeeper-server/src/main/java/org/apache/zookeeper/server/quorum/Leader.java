@@ -592,25 +592,30 @@ public class Leader extends LearnerMaster {
         zk.registerJMX(new LeaderBean(this, zk), self.jmxLocalPeerBean);
 
         try {
+            // 初始化，DISCOVERY
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             self.tick.set(0);
+            // 加载zk数据
             zk.loadData();
 
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
             // Start thread that waits for connection requests from
             // new followers.
+            /**
+             * LearnerCnxAcceptor 监听Learner的请求连接
+             */
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
 
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
-
+            // 开始创建zxid
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
 
             synchronized (this) {
                 lastProposed = zk.getZxid();
             }
-
+            // 成功leader的通知
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -657,13 +662,18 @@ public class Leader extends LearnerMaster {
             // We have to get at least a majority of servers in sync with
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
-
+            /**
+             * 集群版本号ack 等待过半follower 响应，才能继续
+             */
             waitForEpochAck(self.getId(), leaderStateSummary);
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
+                /**
+                 * leader 通知ack 等待过半follower 响应，才能继续
+                 */
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -688,7 +698,9 @@ public class Leader extends LearnerMaster {
                 }
                 return;
             }
-
+            /**
+             * 启动zk 内部
+             */
             startZkServer();
 
             /**
@@ -713,6 +725,7 @@ public class Leader extends LearnerMaster {
                 self.setZooKeeperServer(zk);
             }
 
+            // 完成启动，BROADCAST
             self.setZabState(QuorumPeer.ZabState.BROADCAST);
             self.adminServer.setZooKeeperServer(zk);
 
@@ -722,11 +735,16 @@ public class Leader extends LearnerMaster {
             // If not null then shutdown this leader
             String shutdownMessage = null;
 
+            /**
+             * 每隔ticketTime/2 ，执行一次，查看连接的follower是否超过一半，
+             * 少于一半就会关闭
+             */
             while (true) {
                 synchronized (this) {
                     long start = Time.currentElapsedTime();
                     long cur = start;
                     long end = start + self.tickTime / 2;
+                    // 每隔ticketTime/2 ，执行
                     while (cur < end) {
                         wait(end - cur);
                         cur = Time.currentElapsedTime();
@@ -746,6 +764,7 @@ public class Leader extends LearnerMaster {
                         syncedAckSet.addQuorumVerifier(self.getLastSeenQuorumVerifier());
                     }
 
+                    // 收集当前可以收到的follower响应数量
                     syncedAckSet.addAck(self.getId());
 
                     for (LearnerHandler f : getLearners()) {
@@ -780,6 +799,9 @@ public class Leader extends LearnerMaster {
                      * the size of outstandingProposals can be 1. The only one outstanding proposal is the one waiting for the ACK from
                      * the leader itself.
                      * */
+                    /**
+                     * 集群少于一半follower连接
+                     */
                     if (!tickSkip && !syncedAckSet.hasAllQuorums()
                         && !(self.getQuorumVerifier().overrideQuorumDecision(getForwardingFollowers()) && self.getQuorumVerifier().revalidateOutstandingProp(this, new ArrayList<>(outstandingProposals.values()), lastCommitted))) {
                         // Lost quorum of last committed and/or last proposed
@@ -791,6 +813,7 @@ public class Leader extends LearnerMaster {
                     }
                     tickSkip = !tickSkip;
                 }
+                // 每个follower强制连接
                 for (LearnerHandler f : getLearners()) {
                     f.ping();
                 }

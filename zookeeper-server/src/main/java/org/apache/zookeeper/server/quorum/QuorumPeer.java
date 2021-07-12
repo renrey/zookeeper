@@ -1536,10 +1536,15 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                // 选举结束后，observer
                 case OBSERVING:
                     try {
                         LOG.info("OBSERVING");
+                        /**
+                         * 创建ObserverZooKeeperServer 服务端线程
+                         */
                         setObserver(makeObserver(logFactory));
+                        // observer向leader同步
                         observer.observeLeader();
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);
@@ -1555,10 +1560,15 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                // follower节点
                 case FOLLOWING:
                     try {
                         LOG.info("FOLLOWING");
+                        /**
+                         * 启动FollowerZooKeeperServer 服务端线程
+                         */
                         setFollower(makeFollower(logFactory));
+                        // follower的同步操作
                         follower.followLeader();
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);
@@ -1568,11 +1578,15 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         updateServerState();
                     }
                     break;
-                // leader 角色
+                // leader的操作
                 case LEADING:
                     LOG.info("LEADING");
                     try {
+                        /**
+                         * LeaderZooKeeperServer 服务端
+                         */
                         setLeader(makeLeader(logFactory));
+                        // leader集群间操作
                         leader.lead();
                         setLeader(null);
                     } catch (Exception e) {

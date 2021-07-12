@@ -83,9 +83,11 @@ public class Follower extends Learner {
         boolean completedSync = false;
 
         try {
+            // 找到leader时，状态DISCOVERY
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             QuorumServer leaderServer = findLeader();
             try {
+                // 1. 连接leader
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
@@ -104,8 +106,10 @@ public class Follower extends Learner {
                 }
                 long startTime = Time.currentElapsedTime();
                 self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
+                // 同步时，状态SYNCHRONIZATION
                 self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
                 syncWithLeader(newEpochZxid);
+                // 同步完成,状态BROADCAST
                 self.setZabState(QuorumPeer.ZabState.BROADCAST);
                 completedSync = true;
                 long syncTime = Time.currentElapsedTime() - startTime;
