@@ -188,25 +188,31 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
 
     @Override
     void cleanup() {
+
         if (sockKey != null) {
+            // 主动断开连接
             SocketChannel sock = (SocketChannel) sockKey.channel();
             sockKey.cancel();
             try {
+                // 输入流关闭
                 sock.socket().shutdownInput();
             } catch (IOException e) {
                 LOG.debug("Ignoring exception during shutdown input", e);
             }
             try {
+                // 输出流关闭
                 sock.socket().shutdownOutput();
             } catch (IOException e) {
                 LOG.debug("Ignoring exception during shutdown output", e);
             }
             try {
+                // socket关闭
                 sock.socket().close();
             } catch (IOException e) {
                 LOG.debug("Ignoring exception during socket close", e);
             }
             try {
+                // channel关闭
                 sock.close();
             } catch (IOException e) {
                 LOG.debug("Ignoring exception during channel close", e);
@@ -347,12 +353,14 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         updateNow();
         for (SelectionKey k : selected) {
             SocketChannel sc = ((SocketChannel) k.channel());
+            // 建立连接
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
                 if (sc.finishConnect()) {
                     updateLastSendAndHeard();
                     updateSocketAddresses();
                     sendThread.primeConnection();
                 }
+            // 可写可读
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
                 doIO(pendingQueue, cnxn);
             }

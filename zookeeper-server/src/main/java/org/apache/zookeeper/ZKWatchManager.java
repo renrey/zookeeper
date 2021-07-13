@@ -348,13 +348,16 @@ class ZKWatchManager implements ClientWatchManager {
         String clientPath
     ) {
         final Set<Watcher> result = new HashSet<>();
-
+        // 从WatchManager取出删除path节点的watcher
         switch (type) {
         case None:
+            // 默认watcher
             if (defaultWatcher != null) {
                 result.add(defaultWatcher);
             }
 
+            // disableAutoWatchReset true 默认关闭自动watch重置
+            // 非连接状态，进行watcher清理
             boolean clear = disableAutoWatchReset && state != Watcher.Event.KeeperState.SyncConnected;
             synchronized (dataWatches) {
                 for (Set<Watcher> ws : dataWatches.values()) {
@@ -396,6 +399,9 @@ class ZKWatchManager implements ClientWatchManager {
             }
 
             return result;
+            /**
+             * 节点修改、创建
+             */
         case NodeDataChanged:
         case NodeCreated:
             synchronized (dataWatches) {
