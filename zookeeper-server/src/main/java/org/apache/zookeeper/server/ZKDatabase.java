@@ -107,7 +107,13 @@ public class ZKDatabase {
      * @param snapLog the FileTxnSnapLog mapping this zkdatabase
      */
     public ZKDatabase(FileTxnSnapLog snapLog) {
+        /**
+         * 1. 创建DataTree
+         * 初始化zk节点（/zookeeper、/zookeeper/quota、/zookeeper/config）
+         * 创建WatchManager （dataWatches、childWatches）用作Watcher
+         */
         dataTree = createDataTree();
+        // session过期的map
         sessionsWithTimeouts = new ConcurrentHashMap<Long, Integer>();
         this.snapLog = snapLog;
 
@@ -283,6 +289,9 @@ public class ZKDatabase {
      */
     public long loadDataBase() throws IOException {
         long startTime = Time.currentElapsedTime();
+        /**
+         * 从快照文件恢复，返回最后zxid
+         */
         long zxid = snapLog.restore(dataTree, sessionsWithTimeouts, commitProposalPlaybackListener);
         initialized = true;
         long loadTime = Time.currentElapsedTime() - startTime;
@@ -329,10 +338,17 @@ public class ZKDatabase {
             }
 
             byte[] data = SerializeUtils.serializeRequest(request);
+            /**
+             * 包装成PROPOSAL
+             */
             QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
             Proposal p = new Proposal();
             p.packet = pp;
             p.request = request;
+            /**
+             * 1。加入到commitLog队列中
+             * 2。更新maxCommittedLog
+             */
             committedLog.add(p);
             maxCommittedLog = p.packet.getZxid();
         } finally {
@@ -600,12 +616,15 @@ public class ZKDatabase {
         clear();
 
         // truncate the log
+        // 删除这个zxid开始的log
         boolean truncated = snapLog.truncateLog(zxid);
 
         if (!truncated) {
             return false;
         }
-
+        /**
+         * 删除，重新加载内存数据库
+         */
         loadDataBase();
         return true;
     }

@@ -131,9 +131,12 @@ public class LeaderSessionTracker extends UpgradeableSessionTracker {
     }
 
     public long createSession(int sessionTimeout) {
+        // 一般没开启
         if (localSessionsEnabled) {
             return localSessionTracker.createSession(sessionTimeout);
         }
+        // 正常，创建session，就是id自增
+        // 初始id为当前时间<<24>>>8 ｜ myid << 56
         return globalSessionTracker.createSession(sessionTimeout);
     }
 

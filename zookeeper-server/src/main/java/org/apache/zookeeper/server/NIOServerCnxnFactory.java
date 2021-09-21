@@ -286,6 +286,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     selectorIterator = selectorThreads.iterator();
                 }
                 // 把接收socket连接平均分配到每个selectorThread
+                // 轮询分配
                 SelectorThread selectorThread = selectorIterator.next();
                 // 把这个连接的Channel扔到acceptedQueue中
                 if (!selectorThread.addAcceptedConnection(sc)) {
@@ -378,10 +379,12 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     try {
                         // 本线程的selector堵塞监听通信（非建立连接），
                         // 注意：第一次不会堵塞（由于没注册事件）
+                        // 有新连接的channel被放到acceptQueue，就会被唤醒，进行下个方法进行处理
                         select();
                         /**
-                         * 从acceptedQueue获取所有建立连接事件，处理所有建立连接：
-                         * 在本线程的selector注册对应channel的事件，并创建对应的NIOServerCnxn
+                         * 对新连接的channel进行处理
+                         * 1。从acceptedQueue获取新连接的channel
+                         * 2。在本线程的selector注册监听channel的读写事件，并创建对应的NIOServerCnxn（代表连接）
                          */
                         processAcceptedConnections();
                         processInterestOpsUpdateRequests();
@@ -435,7 +438,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     }
                     // 可读或可写(正常通信)
                     if (key.isReadable() || key.isWritable()) {
-                        // 处理io报文
+                        /**
+                         * 进行网络IO事件执行
+                         */
                         handleIO(key);
                     } else {
                         LOG.warn("Unexpected ops in select {}", key.readyOps());
@@ -463,6 +468,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             // connection
             cnxn.disableSelectable();
             key.interestOps(0);
+            // 更新session过期时间
             touchCnxn(cnxn);
             // 提交任务
             workerPool.schedule(workRequest);
@@ -552,6 +558,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     selectorThread.cleanupSelectionKey(key);
                     return;
                 }
+                // 延长连接的过期时间（非session）
                 touchCnxn(cnxn);
             }
 
@@ -658,16 +665,29 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
         configureSaslLogin();
 
+        /**
+         * 客户端连接相关
+         * 最大连接数、session过期时间、过期队列、定时检查过期线程
+         */
         maxClientCnxns = maxcc;
+        // 最大连接数
         initMaxCnxns();
+        // session过期时间
         sessionlessCnxnTimeout = Integer.getInteger(ZOOKEEPER_NIO_SESSIONLESS_CNXN_TIMEOUT, 10000);
         // We also use the sessionlessCnxnTimeout as expiring interval for
         // cnxnExpiryQueue. These don't need to be the same, but the expiring
         // interval passed into the ExpiryQueue() constructor below should be
         // less than or equal to the timeout.
+        // 过期队列
         cnxnExpiryQueue = new ExpiryQueue<NIOServerCnxn>(sessionlessCnxnTimeout);
+        // 检查过期的线程
         expirerThread = new ConnectionExpirerThread();
 
+        /**
+         * selector数量
+         * worker线程数
+         * 连接超时关闭时间
+         */
         int numCores = Runtime.getRuntime().availableProcessors();
         // 32 cores sweet spot seems to be 4 selector threads
         numSelectorThreads = Integer.getInteger(
@@ -686,12 +706,19 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             + (numWorkerThreads > 0 ? numWorkerThreads : "no") + " worker threads, and "
             + (directBufferBytes == 0 ? "gathered writes." : ("" + (directBufferBytes / 1024) + " kB direct buffers."));
         LOG.info(logMsg);
+        /**
+         * 创建多个SelectorThread，等于多个Selector，监听网络事件
+         */
         // 创建selectorThread
         for (int i = 0; i < numSelectorThreads; ++i) {
             selectorThreads.add(new SelectorThread(i));
         }
 
         listenBacklog = backlog;
+        /**
+         * 1.创建ServerSocketChannel, 绑定端口
+         * 2. 创建acceptThread，用于处理读取二进制报文
+         */
         // 打开Channel通道
         this.ss = ServerSocketChannel.open();
         ss.socket().setReuseAddress(true);
@@ -759,12 +786,19 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     @Override
     public void start() {
         stopped = false;
+        /**
+         * worker线程池
+         * 负责执行selector线程中io事件进行详细执行（请求、响应）
+         */
         if (workerPool == null) {
             workerPool = new WorkerService("NIOWorker", numWorkerThreads, false);
         }
         //  接收通信（不包含连接）线程启动
         for (SelectorThread thread : selectorThreads) {
             /**
+             * 多个SelectorThread启动：
+             * 1。只是监听一组连接的正常通信的网络事件（可读or可写，1个Selector多个连接）
+             * 2。从acceptQueue获取新建立连接SocketChannel，并在Selector注册监听这个channel的读写事件
              * @see SelectorThread#run()
              */
             if (thread.getState() == Thread.State.NEW) {
@@ -773,7 +807,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
         // ensure thread is started once and only once
         /**
-         * 接收连接线程启动
+         * Accept线程启动：
+         *  主要是监听建立连接，监听到的时候创建对应的SocketChannel，轮询分配给各个SelectorThread，
+         *  然后放到对应SelectorThread中的acceptQueue,给对应的线程进行处理
          * @see AcceptThread#run()
          */
         if (acceptThread.getState() == Thread.State.NEW) {

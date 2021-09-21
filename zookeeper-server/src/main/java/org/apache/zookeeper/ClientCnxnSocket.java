@@ -118,10 +118,12 @@ abstract class ClientCnxnSocket {
     }
 
     void readLength() throws IOException {
+        // 4个字节的int作为长度
         int len = incomingBuffer.getInt();
         if (len < 0 || len > packetLen) {
             throw new IOException("Packet len " + len + " is out of range!");
         }
+        // 创建对应长度的buffer
         incomingBuffer = ByteBuffer.allocate(len);
     }
 
@@ -136,7 +138,9 @@ abstract class ClientCnxnSocket {
                 LOG.trace("readConnectResult {} {}", incomingBuffer.remaining(), buf.toString());
             }
         }
-
+        /**
+         * 解析response对象
+         */
         ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
         ConnectResponse conRsp = new ConnectResponse();
@@ -151,8 +155,11 @@ abstract class ClientCnxnSocket {
             // doesn't contain readOnly field
             LOG.warn("Connected to an old server; r-o mode will be unavailable");
         }
-
+        /**
+         * sessionId
+         */
         this.sessionId = conRsp.getSessionId();
+        // 监听全局的watcher
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId, conRsp.getPasswd(), isRO);
     }
 

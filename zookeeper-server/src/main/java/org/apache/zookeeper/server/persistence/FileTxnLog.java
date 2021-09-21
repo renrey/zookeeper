@@ -315,12 +315,20 @@ public class FileTxnLog implements TxnLog, Closeable {
      * @param logDirList array of files
      * @param snapshotZxid return files at, or before this zxid
      * @return log files that starts at, or just before, the snapshot and subsequent ones
+     *  就是从snapshot的zxid开始的日志
      */
     public static File[] getLogFiles(File[] logDirList, long snapshotZxid) {
+        /**
+         * 按zxid顺序获取日志文件，log.zxid
+         */
         List<File> files = Util.sortDataDir(logDirList, LOG_FILE_PREFIX, true);
         long logZxid = 0;
         // Find the log file that starts before or at the same time as the
         // zxid of the snapshot
+        /**
+         * 获取zxid小于snapshotZxid中最大的zxid
+         * 用logZxid代表
+         */
         for (File f : files) {
             long fzxid = Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX);
             if (fzxid > snapshotZxid) {
@@ -333,6 +341,9 @@ public class FileTxnLog implements TxnLog, Closeable {
             }
         }
         List<File> v = new ArrayList<File>(5);
+        /**
+         * 获取zxid比logZxid大的文件
+         */
         for (File f : files) {
             long fzxid = Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX);
             if (fzxid < logZxid) {
@@ -345,11 +356,16 @@ public class FileTxnLog implements TxnLog, Closeable {
     }
 
     /**
+     * 获取最先的zxid（日志的）
      * get the last zxid that was logged in the transaction logs
      * @return the last zxid logged in the transaction logs
      */
     public long getLastLoggedZxid() {
+        /**
+         * 获取所有日志文件
+         */
         File[] files = getLogFiles(logDir.listFiles(), 0);
+        // 从文件名获取最大的日志zxid
         long maxLog = files.length > 0 ? Util.getZxidFromName(files[files.length - 1].getName(), LOG_FILE_PREFIX) : -1;
 
         // if a log file is more recent we must scan it to find
@@ -454,6 +470,7 @@ public class FileTxnLog implements TxnLog, Closeable {
      * @return true if successful false if not
      */
     public boolean truncate(long zxid) throws IOException {
+        // 从指定zxid的文件开始
         try (FileTxnIterator itr = new FileTxnIterator(this.logDir, zxid)) {
             PositionInputStream input = itr.inputStream;
             if (input == null) {
@@ -466,6 +483,9 @@ public class FileTxnLog implements TxnLog, Closeable {
             RandomAccessFile raf = new RandomAccessFile(itr.logFile, "rw");
             raf.setLength(pos);
             raf.close();
+            /**
+             * 开始删除zxid的后log文件（包括zxid）
+             */
             while (itr.goToNextLog()) {
                 if (!itr.logFile.delete()) {
                     LOG.warn("Unable to truncate {}", itr.logFile);
@@ -653,6 +673,9 @@ public class FileTxnLog implements TxnLog, Closeable {
          */
         void init() throws IOException {
             storedFiles = new ArrayList<>();
+            /**
+             * log.文件
+             */
             List<File> files = Util.sortDataDir(
                 FileTxnLog.getLogFiles(logDir.listFiles(), 0),
                 LOG_FILE_PREFIX,
@@ -660,6 +683,7 @@ public class FileTxnLog implements TxnLog, Closeable {
             for (File f : files) {
                 if (Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX) >= zxid) {
                     storedFiles.add(f);
+                // 最后一个是小于zxid，其他都是大于等于的
                 } else if (Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX) < zxid) {
                     // add the last logfile that is less than the zxid
                     storedFiles.add(f);

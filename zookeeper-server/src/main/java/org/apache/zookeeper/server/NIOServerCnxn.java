@@ -184,6 +184,9 @@ public class NIOServerCnxn extends ServerCnxn {
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
             incomingBuffer.flip();
             packetReceived(4 + incomingBuffer.remaining());
+            /**
+             * session未注册完（Connect请求），所以先处理Connect请求
+             */
             if (!initialized) {
                 readConnectRequest();
             } else {
@@ -438,6 +441,7 @@ public class NIOServerCnxn extends ServerCnxn {
         if (!isZKServerRunning()) {
             throw new IOException("ZooKeeperServer not running");
         }
+        // 处理
         zkServer.processConnectRequest(this, incomingBuffer);
         initialized = true;
     }

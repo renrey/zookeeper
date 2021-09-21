@@ -297,6 +297,9 @@ public class Leader extends LearnerMaster {
             addresses = self.getQuorumAddress().getAllAddresses();
         }
 
+        /**
+         * 还是配置文件上的节点地址
+         */
         addresses.stream()
           .map(address -> createServerSocket(address, self.shouldUsePortUnification(), self.isSslQuorum()))
           .filter(Optional::isPresent)
@@ -456,6 +459,9 @@ public class Leader extends LearnerMaster {
                 ExecutorService executor = Executors.newFixedThreadPool(serverSockets.size());
                 CountDownLatch latch = new CountDownLatch(serverSockets.size());
 
+                /**
+                 * 给每个节点都初始化一个LearnerCnxAcceptorHandler线程，由于监听连接建立
+                 */
                 serverSockets.forEach(serverSocket ->
                         executor.submit(new LearnerCnxAcceptorHandler(serverSocket, latch)));
 
@@ -495,7 +501,7 @@ public class Leader extends LearnerMaster {
             public void run() {
                 try {
                     Thread.currentThread().setName("LearnerCnxAcceptorHandler-" + serverSocket.getLocalSocketAddress());
-
+                    // 监听连接建立
                     while (!stop.get()) {
                         acceptConnections();
                     }
@@ -514,6 +520,7 @@ public class Leader extends LearnerMaster {
                 Socket socket = null;
                 boolean error = false;
                 try {
+                    // 阻塞等待
                     socket = serverSocket.accept();
 
                     // start with the initLimit, once the ack is processed
@@ -521,6 +528,10 @@ public class Leader extends LearnerMaster {
                     socket.setSoTimeout(self.tickTime * self.initLimit);
                     socket.setTcpNoDelay(nodelay);
 
+                    /**
+                     * 对当前节点启动一个LearnerHandler线程进行 集群通信
+                     * @see LearnerHandler#run()
+                     */
                     BufferedInputStream is = new BufferedInputStream(socket.getInputStream());
                     LearnerHandler fh = new LearnerHandler(socket, is, Leader.this);
                     fh.start();
@@ -592,6 +603,10 @@ public class Leader extends LearnerMaster {
         zk.registerJMX(new LeaderBean(this, zk), self.jmxLocalPeerBean);
 
         try {
+            /**
+             * 首先ZAB状态是DISCOVERY
+             * 1。内存数据库加载数据(快照、log)，然后清理session，最后生成快照
+             */
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             self.tick.set(0);
             zk.loadData();
@@ -600,17 +615,30 @@ public class Leader extends LearnerMaster {
 
             // Start thread that waits for connection requests from
             // new followers.
+            /**
+             * 2。启动LearnerCnxAcceptor，接收集群节点连接请求
+             * @see LearnerCnxAcceptor#run()
+             */
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
 
+            // acceptedEpoch：保存在acceptedEpoch的long，应该选举时最后收到的集群版本
+            /**
+             * 3。 确定新的集群版本号，需要等待过半follower发送加入集群，不然一直等待
+             * 已收到的learnHandler也会等待，直到过半才会返回新的版本号
+             */
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
 
+            /**
+             * 4。生产新的开始zxid：epoch（当前集群版本32位） + counter（计数，初始是0）
+             */
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
 
             synchronized (this) {
                 lastProposed = zk.getZxid();
             }
 
+            // 先初始化NEWLEADER的报文，发送当前最新的zxid（新的集群版本）
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -657,12 +685,24 @@ public class Leader extends LearnerMaster {
             // We have to get at least a majority of servers in sync with
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
-
+            /**
+             * 等待获取过半的follower（包含leader）发送回ACKEPOCH消息，就是过半follower收到新的epoch
+             *  这些主要是在LearnerHandler进行的
+             */
             waitForEpochAck(self.getId(), leaderStateSummary);
+            /**
+             * 完成DISCOVERY，状态变成SYNCHRONIZATION
+             * （DISCOVERY -> SYNCHRONIZATION）
+             * 也就是DISCOVERY阶段是确定集群epoch
+             */
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
+            /**
+             * 等待过半的follower发送ACK 收到NewLeader报文
+             * 注意：对每个follower的每个LearnerHandler也在等待
+             */
             try {
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
@@ -689,6 +729,10 @@ public class Leader extends LearnerMaster {
                 return;
             }
 
+            /**
+             * 过半follew 发送NEWLEADER的ACK后，
+             * 启动真正的zk服务端功能！！！
+             */
             startZkServer();
 
             /**
@@ -713,6 +757,9 @@ public class Leader extends LearnerMaster {
                 self.setZooKeeperServer(zk);
             }
 
+            /**
+             * BROADCAST
+             */
             self.setZabState(QuorumPeer.ZabState.BROADCAST);
             self.adminServer.setZooKeeperServer(zk);
 
@@ -724,6 +771,9 @@ public class Leader extends LearnerMaster {
 
             while (true) {
                 synchronized (this) {
+                    /**
+                     * 每隔tickTime/2（1.5s） ，执行一次
+                     */
                     long start = Time.currentElapsedTime();
                     long cur = start;
                     long end = start + self.tickTime / 2;
@@ -732,6 +782,8 @@ public class Leader extends LearnerMaster {
                         cur = Time.currentElapsedTime();
                     }
 
+                    // 每第2次，tick+1
+                    // 当前ticket次数？
                     if (!tickSkip) {
                         self.tick.incrementAndGet();
                     }
@@ -748,7 +800,13 @@ public class Leader extends LearnerMaster {
 
                     syncedAckSet.addAck(self.getId());
 
+                    /**
+                     * 定时更新还在集群中（心跳正常）的follower的集合
+                     */
                     for (LearnerHandler f : getLearners()) {
+                        // 主要是判断连接正常
+                        // 还是距离上次收到follower响应报文的时间是否超过5次ticket的时间
+                        // 也就是上次接收到follower的ack(不一定是ping-ack)后的15s内没收到ack，就认为死亡
                         if (f.synced()) {
                             syncedAckSet.addAck(f.getSid());
                         }
@@ -780,6 +838,11 @@ public class Leader extends LearnerMaster {
                      * the size of outstandingProposals can be 1. The only one outstanding proposal is the one waiting for the ACK from
                      * the leader itself.
                      * */
+                    /**
+                     * !tickSkip = 每2次执行才执行
+                     * 就是ticketTime（3s）内，如果没过半follower正常连接
+                     * 认为集群失效了，当前节点就会退出leader状态，重新LOOKING
+                     */
                     if (!tickSkip && !syncedAckSet.hasAllQuorums()
                         && !(self.getQuorumVerifier().overrideQuorumDecision(getForwardingFollowers()) && self.getQuorumVerifier().revalidateOutstandingProp(this, new ArrayList<>(outstandingProposals.values()), lastCommitted))) {
                         // Lost quorum of last committed and/or last proposed
@@ -791,6 +854,10 @@ public class Leader extends LearnerMaster {
                     }
                     tickSkip = !tickSkip;
                 }
+                /**
+                 * 每隔ticketTime/2，与所有的follower发送一次ping心跳请求(PING报文)
+                 *  就是tickTime发送2次
+                 */
                 for (LearnerHandler f : getLearners()) {
                     f.ping();
                 }
@@ -1422,23 +1489,43 @@ public class Leader extends LearnerMaster {
         }
     }
 
+    // sid：节点id
     @Override
     public long getEpochToPropose(long sid, long lastAcceptedEpoch) throws InterruptedException, IOException {
+        // 对connectingFollowers 加锁
         synchronized (connectingFollowers) {
+            /**
+             * 就是超过一半follower（包含本节点，也就是leader）已经确认，新版本号已确定，返回新版本号
+             */
             if (!waitingForNewEpoch) {
                 return epoch;
             }
+            // 一般第一次到这
+            // 就是把epoch当前集群版本 = lastAcceptedEpoch+1
+            // 就是最后收到的版本号+1，变成当前的
             if (lastAcceptedEpoch >= epoch) {
                 epoch = lastAcceptedEpoch + 1;
             }
+            // 判断本节点是否参加选举类型
+            // 正常肯定是，本节点加入connectingFollowers
+            // 就是添加正常连接的follower
             if (isParticipant(sid)) {
                 connectingFollowers.add(sid);
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+            /**
+             * connectingFollowers包含当前节点（leader）
+             * and connectingFollowers过半，确定新的版本号
+             */
             if (connectingFollowers.contains(self.getId()) && verifier.containsQuorum(connectingFollowers)) {
                 waitingForNewEpoch = false;
                 self.setAcceptedEpoch(epoch);
+                // 唤醒其他获取线程？
                 connectingFollowers.notifyAll();
+                /**
+                 * 如果未有过半follower 发送连接加入（connectingFollowers过半），
+                 * leader、其他节点的learnHandler 都在这挂起，直到过半后，返回确定的集群版本号
+                  */
             } else {
                 long start = Time.currentElapsedTime();
                 if (sid == self.getId()) {
@@ -1553,6 +1640,10 @@ public class Leader extends LearnerMaster {
         }
 
         leaderStartTime = Time.currentElapsedTime();
+        /**
+         * 启动ZkServer的基础功能
+         * RequestProcessors、SessionTracker、RequestThrottler
+         */
         zk.startup();
         /*
          * Update the election vote here to ensure that all members of the
@@ -1563,6 +1654,10 @@ public class Leader extends LearnerMaster {
          */
         self.updateElectionVote(getEpoch());
 
+        /**
+         * db的lastProcessedZxid变成最新
+         * leader：就是新epoch，counter=0的zxid
+         */
         zk.getZKDatabase().setlastProcessedZxid(zk.getZxid());
     }
 
@@ -1685,12 +1780,14 @@ public class Leader extends LearnerMaster {
     }
 
     @Override
-    public int getTickOfNextAckDeadline() {
+    public int  getTickOfNextAckDeadline() {
+        // 当前ticket次数（轮） + 间隔次数5
         return self.tick.get() + self.syncLimit;
     }
 
     @Override
     public int getTickOfInitialAckDeadline() {
+        // 当前ticket次数（轮次） + 初始同步次数(10次，进行同步可经历的次数) + 同步间隔(5s)
         return self.tick.get() + self.initLimit + self.syncLimit;
     }
 

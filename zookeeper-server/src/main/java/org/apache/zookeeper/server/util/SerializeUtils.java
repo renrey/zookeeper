@@ -145,10 +145,20 @@ public class SerializeUtils {
     }
 
     public static void deserializeSnapshot(DataTree dt, InputArchive ia, Map<Long, Integer> sessions) throws IOException {
+        /**
+         * session数量：
+         * count（int,4byte）
+         */
         int count = ia.readInt("count");
+        // 就遍历session数量次数，获取每个session
         while (count > 0) {
+            /**
+             * session信息：
+             * id（Long） + timeout（int）
+             */
             long id = ia.readLong("id");
             int to = ia.readInt("timeout");
+            // 添加到sessions的map中
             sessions.put(id, to);
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(
@@ -158,6 +168,9 @@ public class SerializeUtils {
             }
             count--;
         }
+        /**
+         * 解析树的内容
+         */
         dt.deserialize(ia, "tree");
     }
 

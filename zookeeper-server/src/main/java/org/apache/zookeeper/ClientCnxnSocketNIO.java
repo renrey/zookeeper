@@ -64,6 +64,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
     }
 
     /**
+     * 进行正常请求通信的报文读取
      * @throws InterruptedException
      * @throws IOException
      */
@@ -72,18 +73,26 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         if (sock == null) {
             throw new IOException("Socket is null!");
         }
+        // 有信息接收
         if (sockKey.isReadable()) {
+            // 读取二进制字节到incomingBuffer
             int rc = sock.read(incomingBuffer);
             if (rc < 0) {
                 throw new EndOfStreamException("Unable to read additional data from server sessionid 0x"
                                                + Long.toHexString(sessionId)
                                                + ", likely server has closed socket");
             }
+            // buffer没有空位=本次需要已经读取完（len or 内容）
             if (!incomingBuffer.hasRemaining()) {
+                // 把position复位到第一位，准备开始查看
                 incomingBuffer.flip();
+
+                // 第1次是length，所以是lenBuffer
                 if (incomingBuffer == lenBuffer) {
                     recvCount.getAndIncrement();
+                    // 报文长度，并创建对应长度的incomingBuffer
                     readLength();
+                // 未初始化完，证明接收的是Connect响应（注册session）
                 } else if (!initialized) {
                     readConnectResult();
                     enableRead();
@@ -96,35 +105,50 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     incomingBuffer = lenBuffer;
                     updateLastHeard();
                     initialized = true;
+                // 正常响应
                 } else {
+                    // 对内容进行解析
                     sendThread.readResponse(incomingBuffer);
                     lenBuffer.clear();
+                    // 下一次读取先读len
                     incomingBuffer = lenBuffer;
                     updateLastHeard();
                 }
             }
         }
+        // 可以发送消息
         if (sockKey.isWritable()) {
+            // 从outgoingQueue取出发送的消息，注意只有已全部发送packet才会从队列出去
             Packet p = findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress());
 
+            // 有需要发送的
             if (p != null) {
                 updateLastSend();
                 // If we already started writing p, p.bb will already exist
+                // 当前请求Packet 第1次进入，是没有创建的buffer，所以先创建对应的buffer
                 if (p.bb == null) {
                     if ((p.requestHeader != null)
                         && (p.requestHeader.getType() != OpCode.ping)
                         && (p.requestHeader.getType() != OpCode.auth)) {
                         p.requestHeader.setXid(cnxn.getXid());
                     }
+                    // 创建ByteBuffer，把内容序列化
                     p.createBB();
                 }
+                // 把buffer内容写入socket
                 sock.write(p.bb);
+                // buffer没有空位，就是packet的内容已全部发送
+                /**
+                 * 发送完成，从outGoingQueue出去，放到pendingQueue
+                 */
                 if (!p.bb.hasRemaining()) {
                     sentCount.getAndIncrement();
+                    // 从outgoingQueue移除
                     outgoingQueue.removeFirstOccurrence(p);
                     if (p.requestHeader != null
                         && p.requestHeader.getType() != OpCode.ping
                         && p.requestHeader.getType() != OpCode.auth) {
+                        // packet放入到pendingQueue
                         synchronized (pendingQueue) {
                             pendingQueue.add(p);
                         }
@@ -272,12 +296,14 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         // 1. 打开一个 SocketChannel
         SocketChannel sock = createSock();
         try {
+            // 2. 把channel注册到Selector监听OP_CONNNECT，然后发起连接
             registerAndConnect(sock, addr);
         } catch (UnresolvedAddressException | UnsupportedAddressTypeException | SecurityException | IOException e) {
             LOG.error("Unable to open socket to {}", addr);
             sock.close();
             throw e;
         }
+        // 连接未初始化完
         initialized = false;
 
         /*
@@ -336,6 +362,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         int waitTimeOut,
         Queue<Packet> pendingQueue,
         ClientCnxn cnxn) throws IOException, InterruptedException {
+        // selector阻塞等待
         selector.select(waitTimeOut);
         Set<SelectionKey> selected;
         synchronized (this) {
@@ -347,12 +374,18 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         updateNow();
         for (SelectionKey k : selected) {
             SocketChannel sc = ((SocketChannel) k.channel());
+            // 建立连接
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
                 if (sc.finishConnect()) {
                     updateLastSendAndHeard();
                     updateSocketAddresses();
+                    /**
+                     * 1。发送ConnectRequest进行注册session
+                     * 2。改为监听OP_READ 和OP_WRITE
+                     */
                     sendThread.primeConnection();
                 }
+            // 正常请求
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
                 doIO(pendingQueue, cnxn);
             }

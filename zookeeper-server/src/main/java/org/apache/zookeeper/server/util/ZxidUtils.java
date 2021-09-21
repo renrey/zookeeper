@@ -27,6 +27,7 @@ public class ZxidUtils {
         return zxid & 0xffffffffL;
     }
     public static long makeZxid(long epoch, long counter) {
+        // 前32位是集群版本号epoch，后32位是counter
         return (epoch << 32L) | (counter & 0xffffffffL);
     }
     public static String zxidToString(long zxid) {

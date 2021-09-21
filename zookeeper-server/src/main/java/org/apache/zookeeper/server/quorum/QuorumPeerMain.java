@@ -128,6 +128,7 @@ public class QuorumPeerMain {
 
         // Start and schedule the the purge task
         // 后台清理线程（日志、快照）
+        // 默认不开启
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(
             config.getDataDir(),
             config.getDataLogDir(),
@@ -136,10 +137,12 @@ public class QuorumPeerMain {
         purgeMgr.start();
 
         if (args.length == 1 && config.isDistributed()) {
+            // 集群启动！！！
             runFromConfig(config);
         } else {
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
             // there is only server in the quorum -- run as standalone
+            // 单点
             ZooKeeperServerMain.main(args);
         }
     }
@@ -173,6 +176,12 @@ public class QuorumPeerMain {
                 // 创建工厂
                 cnxnFactory = ServerCnxnFactory.createFactory();
                 // 初始化工厂！！！ 包含NIO
+                /**
+                 * 初始化连接工厂（用于客户端连接）！！！但是注意都是创建而已，并没有使用Selector对channel注册监听网络请求，所以这还不会不会处理请求
+                 *
+                 * 包含ServerSocketChannel初始（绑定端口、配置NIO）、AcceptorThread、客户端过期、最大连接数、
+                 * SelectorThread
+                 */
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
             }
 
@@ -182,6 +191,11 @@ public class QuorumPeerMain {
             }
 
             quorumPeer = getQuorumPeer();
+            /**
+             * 获取磁盘的日志文件、快照文件（路径），创建FileTxnSnapLog
+             * dataLogDir: 日志文件 目录
+             * dataDir: 数据快照 目录
+             */
             quorumPeer.setTxnFactory(new FileTxnSnapLog(config.getDataLogDir(), config.getDataDir()));
             quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
             quorumPeer.enableLocalSessionsUpgrading(config.isLocalSessionsUpgradingEnabled());
@@ -197,11 +211,19 @@ public class QuorumPeerMain {
             quorumPeer.setObserverMasterPort(config.getObserverMasterPort());
             quorumPeer.setConfigFileName(config.getConfigFilename());
             quorumPeer.setClientPortListenBacklog(config.getClientPortListenBacklog());
+            /**
+             * 创建zk内存数据库，
+             * 获取配置参数、创建对象
+             */
             quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
             quorumPeer.setQuorumVerifier(config.getQuorumVerifier(), false);
             if (config.getLastSeenQuorumVerifier() != null) {
                 quorumPeer.setLastSeenQuorumVerifier(config.getLastSeenQuorumVerifier(), false);
             }
+            /**
+             * 初始化内存数据库（配置相关，不是数据）
+             * -- 初始的zk的节点、wathcer对应的WatchManager（2个）
+             */
             quorumPeer.initConfigInZKDatabase();
             quorumPeer.setCnxnFactory(cnxnFactory);
             quorumPeer.setSecureCnxnFactory(secureCnxnFactory);
@@ -227,18 +249,22 @@ public class QuorumPeerMain {
                 quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
             }
             quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+            // 安全校验的初始化（sasl等）
             quorumPeer.initialize();
 
             if (config.jvmPauseMonitorToRun) {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
 
-            // 启动节点核心线程！！！
+            //
             /**
-             * @see org.apache.zookeeper.server.quorum.QuorumPeer#run()
+             * 启动节点核心线程！！！
+             * 首先开启集群选举
+             * @see QuorumPeer#start()
              */
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
+
             // 当前启动线程等待quorumPeer线程，再执行
             // 后面的操作就是关闭线程的处理
             quorumPeer.join();

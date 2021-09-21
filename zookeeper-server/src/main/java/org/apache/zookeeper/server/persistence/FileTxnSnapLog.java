@@ -112,6 +112,9 @@ public class FileTxnSnapLog {
     public FileTxnSnapLog(File dataDir, File snapDir) throws IOException {
         LOG.debug("Opening datadir:{} snapDir:{}", dataDir, snapDir);
 
+        /**
+         * 对应的目录都创建version-2目录
+         */
         this.dataDir = new File(dataDir, version + VERSION);
         this.snapDir = new File(snapDir, version + VERSION);
 
@@ -166,6 +169,10 @@ public class FileTxnSnapLog {
             checkSnapDir();
         }
 
+        /**
+         * FileTxnLog:代表日志
+         * FileSnap: 代表快照
+         */
         txnLog = new FileTxnLog(this.dataDir);
         snapLog = new FileSnap(this.snapDir);
 
@@ -246,24 +253,38 @@ public class FileTxnSnapLog {
      * @param sessions the sessions to be restored
      * @param listener the playback listener to run on the
      * database restoration
-     * @return the highest zxid restored
+     * @return the highest zxid restored 快照中最高的zxid
      * @throws IOException
+     * 1。 先恢复快照文件数据
+     * 2。 回放执行快照后的zxid开始的log
      */
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
+        /**
+         * 从快照文件解析数据，恢复到DataTree、sessionMap中
+         * 返回的是当前快照最后执行的zxid，也就是文件名上的
+         */
         long deserializeResult = snapLog.deserialize(dt, sessions);
         ServerMetrics.getMetrics().STARTUP_SNAP_LOAD_TIME.add(Time.currentElapsedTime() - snapLoadingStartTime);
+        // logDir日志目录
         FileTxnLog txnLog = new FileTxnLog(dataDir);
         boolean trustEmptyDB;
+        // initialize文件，如果存在就删除
         File initFile = new File(dataDir.getParent(), "initialize");
+
         if (Files.deleteIfExists(initFile.toPath())) {
             LOG.info("Initialize file found, an empty database will not block voting participation");
             trustEmptyDB = true;
         } else {
             trustEmptyDB = autoCreateDB;
         }
-
+        /**
+         * 定义恢复执行
+         */
         RestoreFinalizer finalizer = () -> {
+            /**
+             * 把log文件进行回放
+             */
             long highestZxid = fastForwardFromEdits(dt, sessions, listener);
             // The snapshotZxidDigest will reset after replaying the txn of the
             // zxid in the snapshotZxidDigest, if it's not reset to null after
@@ -280,9 +301,16 @@ public class FileTxnSnapLog {
             return highestZxid;
         };
 
+        /**
+         * 没有快照时执行
+         */
         if (-1L == deserializeResult) {
             /* this means that we couldn't find any snapshot, so we need to
              * initialize an empty database (reported in ZOOKEEPER-2325) */
+            /**
+             * 无快照，有日志
+             * 有最后的zxid，就是已经有日志，直接执行回放log就完了
+             */
             if (txnLog.getLastLoggedZxid() != -1) {
                 // ZOOKEEPER-3056: provides an escape hatch for users upgrading
                 // from old versions of zookeeper (3.4.x, pre 3.5.3).
@@ -294,6 +322,11 @@ public class FileTxnSnapLog {
                 }
             }
 
+            /**
+             * 无快照，无日志
+             * 本地没有dataLog日志，生成快照
+             */
+            // 默认true
             if (trustEmptyDB) {
                 /* TODO: (br33d) we should either put a ConcurrentHashMap on restore()
                  *       or use Map on save() */
@@ -308,7 +341,9 @@ public class FileTxnSnapLog {
                 return -1L;
             }
         }
-
+        /**
+         * 有快照直接执行回放log
+         */
         return finalizer.run();
     }
 
@@ -327,16 +362,21 @@ public class FileTxnSnapLog {
         DataTree dt,
         Map<Long, Integer> sessions,
         PlayBackListener listener) throws IOException {
+        // 当前最后的zxid（快照zxid）后面的一个zxid开始
         TxnIterator itr = txnLog.read(dt.lastProcessedZxid + 1);
         long highestZxid = dt.lastProcessedZxid;
-        TxnHeader hdr;
+        TxnHeader /**/hdr;
         int txnLoaded = 0;
         long startTime = Time.currentElapsedTime();
         try {
+            /**
+             * 开始遍历lastProcessedZxid+1的日志文件（向后）
+             */
             while (true) {
                 // iterator points to
                 // the first valid txn when initialized
                 hdr = itr.getHeader();
+                // 空log，直接返回
                 if (hdr == null) {
                     //empty logs
                     return dt.lastProcessedZxid;
@@ -344,9 +384,13 @@ public class FileTxnSnapLog {
                 if (hdr.getZxid() < highestZxid && highestZxid != 0) {
                     LOG.error("{}(highestZxid) > {}(next log) for type {}", highestZxid, hdr.getZxid(), hdr.getType());
                 } else {
+                    // 获取这个log的zxid（从fileheadr获取），且更新highestZxid
                     highestZxid = hdr.getZxid();
                 }
                 try {
+                    /**
+                     * 执行log里面的操作
+                     */
                     processTransaction(hdr, dt, sessions, itr.getTxn());
                     dt.compareDigest(hdr, itr.getTxn(), itr.getDigest());
                     txnLoaded++;
@@ -357,6 +401,9 @@ public class FileTxnSnapLog {
                                           + e.getMessage(),
                                           e);
                 }
+                /**
+                 * 放入commitLog中
+                 */
                 listener.onTxnLoaded(hdr, itr.getTxn(), itr.getDigest());
                 if (!itr.next()) {
                     break;
@@ -439,6 +486,9 @@ public class FileTxnSnapLog {
             rc = dt.processTxn(hdr, txn);
             break;
         default:
+            /**
+             * 执行事务
+             */
             rc = dt.processTxn(hdr, txn);
         }
 
@@ -515,6 +565,9 @@ public class FileTxnSnapLog {
 
             // truncate it
             try (FileTxnLog truncLog = new FileTxnLog(dataDir)) {
+                /**
+                 * 删除从zxid开始的log文件
+                 */
                 boolean truncated = truncLog.truncate(zxid);
 
                 // re-open the txnLog and snapLog

@@ -101,6 +101,7 @@ public class DataTree {
     /**
      * This map provides a fast lookup to the datanodes. The tree is the
      * source of truth and is where all the locking occurs
+     * 存放所有所有节点的对象
      */
     private final NodeHashMap nodes;
 
@@ -282,24 +283,55 @@ public class DataTree {
         this(new DigestCalculator());
     }
 
+    // 初始化
     DataTree(DigestCalculator digestCalculator) {
         this.digestCalculator = digestCalculator;
         nodes = new NodeHashMapImpl(digestCalculator);
 
+        /**
+         * 1. 添加根节点root，path为空
+         */
         /* Rather than fight it, let root have an alias */
+        // 放入一个啥都没有的root节点（DataNode），path直接空的
         nodes.put("", root);
         nodes.putWithoutDigest(rootZookeeper, root);
 
+        /**
+         * 2. 下面就是加入两个节点：
+         *  ( 1)/zookeeper ：当前节点
+         *  ( 2)/zookeeper/quota
+         */
+
         /** add the proc node and quota node */
+        /**
+         * 往root节点加入一个/zookeeper：
+         * 1. 往root的DataNode的Children 加入如这个节点的名字 (zookeeper)
+         * 2. nodes添加这个节点（/zookeeper），也就是往里面map 添加key= /zookeeper 的DataNode
+         */
         root.addChild(procChildZookeeper);
         nodes.put(procZookeeper, procDataNode);
 
+        /**
+         * /zookeeper添加/zookeeper/quota
+         * 1. DataNode的children添加quota
+         * 2. nodes的map 添加/zookeeper/quota的DataNode
+         */
         procDataNode.addChild(quotaChildZookeeper);
         nodes.put(quotaZookeeper, quotaDataNode);
 
+        /**
+         * 3. 添加/zookeeper/config  配置节点
+         */
         addConfigNode();
 
+        // 设置已有节点数量
         nodeDataSize.set(approximateDataSize());
+
+        /**
+         * 4.创建2个WatchManager:
+         * 1.dataWatches
+         * 2.childWatches
+         */
         try {
             dataWatches = WatchManagerFactory.createWatchManager();
             childWatches = WatchManagerFactory.createWatchManager();
@@ -312,8 +344,13 @@ public class DataTree {
     /**
      * create a /zookeeper/config node for maintaining the configuration (membership and quorum system) info for
      * zookeeper
+     *
      */
     public void addConfigNode() {
+        /**
+         * 往/zookeeper添加/zookeeper/config
+         * 作用：作为zk配置的节点
+         */
         DataNode zookeeperZnode = nodes.get(procZookeeper);
         if (zookeeperZnode != null) { // should always be the case
             zookeeperZnode.addChild(configChildZookeeper);
@@ -927,6 +964,9 @@ public class DataTree {
                 rc.path = deleteTxn.getPath();
                 deleteNode(deleteTxn.getPath(), header.getZxid());
                 break;
+                /**
+                 * setData
+                 */
             case OpCode.reconfig:
             case OpCode.setData:
                 SetDataTxn setDataTxn = (SetDataTxn) txn;
@@ -1353,13 +1393,26 @@ public class DataTree {
     }
 
     public void deserialize(InputArchive ia, String tag) throws IOException {
+        /**
+         * acl权限相关内容
+         */
         aclCache.deserialize(ia);
         nodes.clear();
         pTrie.clear();
         nodeDataSize.set(0);
+        /**
+         * 先读4字节代表长度，然后再读取这个长度的内容
+         * 实际得到的是path
+         * 实际 path长度（int）+ path
+         */
         String path = ia.readString("path");
         while (!"/".equals(path)) {
+            // 创建DataNode
             DataNode node = new DataNode();
+            /**
+             * 解析node的内容
+             * @see org.apache.zookeeper.server.DataNode#deserialize(org.apache.jute.InputArchive, java.lang.String)
+             */
             ia.readRecord(node, "node");
             nodes.put(path, node);
             synchronized (node) {
@@ -1378,6 +1431,9 @@ public class DataTree {
                                           + " of path "
                                           + path);
                 }
+                /**
+                 * 节点的children是 子节点恢复时自己补充上去的
+                 */
                 parent.addChild(path.substring(lastSlash + 1));
                 long eowner = node.stat.getEphemeralOwner();
                 EphemeralType ephemeralType = EphemeralType.get(eowner);

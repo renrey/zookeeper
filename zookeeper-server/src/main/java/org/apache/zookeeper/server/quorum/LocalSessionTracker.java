@@ -40,7 +40,9 @@ public class LocalSessionTracker extends SessionTrackerImpl {
     }
 
     public long createSession(int sessionTimeout) {
+        // 创建session
         long sessionId = super.createSession(sessionTimeout);
+        // 保存sessionsWithTimeout, 也就更新到ZkDataBase的sessionWithTimeout中
         commitSession(sessionId, sessionTimeout);
         return sessionId;
     }

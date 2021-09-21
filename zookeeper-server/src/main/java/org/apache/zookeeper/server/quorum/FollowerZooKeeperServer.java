@@ -70,6 +70,8 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
     protected void setupRequestProcessors() {
         /**
          * 定义了2个Processor链
+         * 主： follwer -> commit -> final
+         * 同步：sync -> sendAck
          */
         // follwer -> commit -> final
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);

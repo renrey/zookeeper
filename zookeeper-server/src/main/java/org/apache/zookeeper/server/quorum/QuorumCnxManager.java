@@ -1156,6 +1156,7 @@ public class QuorumCnxManager {
                                 if (quorumSaslAuthEnabled) {
                                     receiveConnectionAsync(client);
                                 } else {
+                                    // 一般连接
                                     receiveConnection(client);
                                 }
                                 numRetries = 0;

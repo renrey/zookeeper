@@ -93,7 +93,9 @@ public class QuorumPeerConfig {
     /** defaults to -1 if not set explicitly */
     protected int clientPortListenBacklog = -1;
 
+    // 10s
     protected int initLimit;
+    // 5s
     protected int syncLimit;
     protected int connectToLearnerMasterLimit;
     protected int electionAlg = 3;

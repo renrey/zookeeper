@@ -111,6 +111,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         super("SessionTracker", listener);
         this.expirer = expirer;
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
+        // 与ZkDatabase的sessionsWithTimeout绑定
         this.sessionsWithTimeout = sessionsWithTimeout;
         this.nextSessionId.set(initializeNextSessionId(serverId));
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
@@ -259,7 +260,10 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     public long createSession(int sessionTimeout) {
+        // 生成id，id递增
+        // 初始id为当前时间<<24>>>8 ｜ myid << 56
         long sessionId = nextSessionId.getAndIncrement();
+        // 生产session对象
         trackSession(sessionId, sessionTimeout);
         return sessionId;
     }
@@ -268,6 +272,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     public synchronized boolean trackSession(long id, int sessionTimeout) {
         boolean added = false;
 
+        // session对象
         SessionImpl session = sessionsById.get(id);
         if (session == null) {
             session = new SessionImpl(id, sessionTimeout);
@@ -275,6 +280,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
         // findbugs2.0.3 complains about get after put.
         // long term strategy would be use computeIfAbsent after JDK 1.8
+        // 放入map中管理session
         SessionImpl existedSession = sessionsById.putIfAbsent(id, session);
 
         if (existedSession != null) {
@@ -292,7 +298,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                 "SessionTrackerImpl --- " + actionStr
                 + " session 0x" + Long.toHexString(id) + " " + sessionTimeout);
         }
-
+        // 延长过期时间
         updateSessionExpiry(session, sessionTimeout);
         return added;
     }

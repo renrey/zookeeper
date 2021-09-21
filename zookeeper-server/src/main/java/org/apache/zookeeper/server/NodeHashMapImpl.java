@@ -29,7 +29,11 @@ import org.apache.zookeeper.server.util.AdHash;
  * each mutation.
  */
 public class NodeHashMapImpl implements NodeHashMap {
-
+    /**
+     * 就是用ConcurrentHashMap 存放所有节点
+     * key ：完整路径
+     * value：对应的DataNode
+     */
     private final ConcurrentHashMap<String, DataNode> nodes;
     private final boolean digestEnabled;
     private final DigestCalculator digestCalculator;

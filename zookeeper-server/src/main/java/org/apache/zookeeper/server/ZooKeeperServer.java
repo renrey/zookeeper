@@ -517,17 +517,31 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
          *
          * See ZOOKEEPER-1642 for more detail.
          */
+        // 本地的内存数据库是否已有数据
         if (zkDb.isInitialized()) {
+            // 已有数据（可能之前leader宕机了），就不初始化了
             setZxid(zkDb.getDataTreeLastProcessedZxid());
         } else {
+            //
+            /**
+             * 刚启动，未初始过，先进行初始化
+             * 初始化内存数据库(先恢复快照，再回放log)
+             */
             setZxid(zkDb.loadDataBase());
         }
 
+        /**
+         * 把zkDb过期的session清理
+         * 可能是快照恢复or已有数据库的
+         */
         // Clean up dead sessions
         zkDb.getSessions().stream()
                         .filter(session -> zkDb.getSessionWithTimeOuts().get(session) == null)
                         .forEach(session -> killSession(session, zkDb.getDataTreeLastProcessedZxid()));
 
+        /**
+         * 把session清理后，对当前的zkdb进行生成快照
+         */
         // Make a clean snapshot
         takeSnapshot();
     }
@@ -661,6 +675,13 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
         long id = cnxn.getSessionId();
         int to = cnxn.getSessionTimeout();
+        // 延长过期时间
+        /**
+         * Leader：
+         * 延长globalSessionTracker中过期时间
+         * Follower：
+         * 放入touchTable ，定时ping会返回给leader
+         */
         if (!sessionTracker.touchSession(id, to)) {
             throw new MissingSessionException("No session with sessionid 0x"
                                               + Long.toHexString(id)
@@ -711,12 +732,15 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     private void startupWithServerState(State state) {
+        // session相关
         if (sessionTracker == null) {
             createSessionTracker();
         }
         startSessionTracker();
+        // 初始化RequestProcessors处理链
         setupRequestProcessors();
 
+        // 给客户端发送请求队列式处理
         startRequestThrottler();
 
         registerJMX();
@@ -725,6 +749,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
         registerMetrics();
 
+        // 更新状态
         setState(state);
 
         requestPathMetricsCollector.start();
@@ -1002,12 +1027,25 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             // Possible since it's just deserialized from a packet on the wire.
             passwd = new byte[0];
         }
+
+        /**
+         * id自增，初始id为当前时间<<24>>>8 ｜ myid << 56
+         * 因此每个节点的生成sessionId都会不一样，不一定需要到leader创建
+         *
+         * Leader：
+         * 生成id、生成SessionImpl对象、放入过期队列中
+         * Follower：
+         * 生成id
+         */
         long sessionId = sessionTracker.createSession(timeout);
         Random r = new Random(sessionId ^ superSecret);
         r.nextBytes(passwd);
         ByteBuffer to = ByteBuffer.allocate(4);
         to.putInt(timeout);
         cnxn.setSessionId(sessionId);
+        /**
+         * 提交createSession请求到RequestThrottler继续处理
+         */
         Request si = new Request(cnxn, sessionId, 0, OpCode.createSession, to, null);
         submitRequest(si);
         return sessionId;
@@ -1461,7 +1499,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // We don't want to receive any packets until we are sure that the
         // session is setup
         cnxn.disableRecv();
+        // 未有sessionId
         if (sessionId == 0) {
+            /**
+             * 创建session
+             */
             long id = createSession(cnxn, passwd, sessionTimeout);
             LOG.debug(
                 "Client attempting to establish new session: session = 0x{}, zxid = 0x{}, timeout = {}, address = {}",

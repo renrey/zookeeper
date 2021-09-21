@@ -55,7 +55,7 @@ public class SyncedLearnerTracker {
 
     public boolean hasAllQuorums() {
         /**
-         * 默认是QuorumMaj ，过半数即可
+         * 默认是QuorumMaj ，过半数(不包含本节点)即可
          * @see QuorumMaj#containsQuorum(java.util.Set)
          */
         for (QuorumVerifierAcksetPair qvAckset : qvAcksetPairs) {

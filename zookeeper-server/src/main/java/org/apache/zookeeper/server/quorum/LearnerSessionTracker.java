@@ -63,10 +63,12 @@ public class LearnerSessionTracker extends UpgradeableSessionTracker {
     public LearnerSessionTracker(SessionExpirer expirer, ConcurrentMap<Long, Integer> sessionsWithTimeouts, int tickTime, long id, boolean localSessionsEnabled, ZooKeeperServerListener listener) {
         this.expirer = expirer;
         this.touchTable.set(new ConcurrentHashMap<Long, Integer>());
+        // 与zkDatabase的sessionsWithTimeout绑定
         this.globalSessionsWithTimeouts = sessionsWithTimeouts;
         this.serverId = id;
         nextSessionId.set(SessionTrackerImpl.initializeNextSessionId(serverId));
 
+        // 默认false
         this.localSessionsEnabled = localSessionsEnabled;
         if (this.localSessionsEnabled) {
             createLocalSessionTracker(expirer, tickTime, id, listener);
@@ -82,6 +84,7 @@ public class LearnerSessionTracker extends UpgradeableSessionTracker {
     }
 
     public void start() {
+        // 一般false，无操作
         if (localSessionTracker != null) {
             localSessionTracker.start();
         }
@@ -150,6 +153,7 @@ public class LearnerSessionTracker extends UpgradeableSessionTracker {
     }
 
     public Map<Long, Integer> snapshot() {
+        // 返回快照并且会重置
         return touchTable.getAndSet(new ConcurrentHashMap<Long, Integer>());
     }
 

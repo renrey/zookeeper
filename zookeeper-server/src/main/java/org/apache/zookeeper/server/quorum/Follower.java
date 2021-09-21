@@ -83,11 +83,19 @@ public class Follower extends Learner {
         boolean completedSync = false;
 
         try {
+            /**
+             * DISCOVERY阶段
+             */
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             QuorumServer leaderServer = findLeader();
             try {
+                // 1。与leader建立连接
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
+                /**
+                 * 注册自己信息到leader，然后获取且确认新的集群epoch
+                 *   首先发送FOLLOWERINFO报文给leader
+                 */
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
                 if (self.isReconfigStateChange()) {
                     throw new Exception("learned about role change");
@@ -105,7 +113,14 @@ public class Follower extends Learner {
                 long startTime = Time.currentElapsedTime();
                 self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
                 self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
+                /**
+                 * 进入SYNCHRONIZATION阶段
+                 */
+
                 syncWithLeader(newEpochZxid);
+                /**
+                 * BROADCAST阶段
+                 */
                 self.setZabState(QuorumPeer.ZabState.BROADCAST);
                 completedSync = true;
                 long syncTime = Time.currentElapsedTime() - startTime;
@@ -157,6 +172,9 @@ public class Follower extends Learner {
      */
     protected void processPacket(QuorumPacket qp) throws Exception {
         switch (qp.getType()) {
+            /**
+             * leader的定时心跳ping，响应PING返回
+             */
         case Leader.PING:
             ping(qp);
             break;

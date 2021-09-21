@@ -64,6 +64,7 @@ public class LeaderZooKeeperServer extends QuorumZooKeeperServer {
     @Override
     protected void setupRequestProcessors() {
         /**
+         * 主要链：
          * LeaderRequestProcessor ->PrepRequestProcessor -> ProposalRequestProcessor ->
          * CommitProcessor -> ToBeAppliedRequestProcessor ->finalProcessor
          *

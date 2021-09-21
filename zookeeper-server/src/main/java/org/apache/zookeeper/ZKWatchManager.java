@@ -348,7 +348,7 @@ class ZKWatchManager implements ClientWatchManager {
         String clientPath
     ) {
         final Set<Watcher> result = new HashSet<>();
-
+        // 根据EventType，从对应类型的watches集合取出对应path的Watcher
         switch (type) {
         case None:
             if (defaultWatcher != null) {
@@ -396,6 +396,10 @@ class ZKWatchManager implements ClientWatchManager {
             }
 
             return result;
+            /**
+             * NodeDataChanged、NodeCreated:
+             * getData、exist的watcher
+             */
         case NodeDataChanged:
         case NodeCreated:
             synchronized (dataWatches) {
@@ -406,12 +410,20 @@ class ZKWatchManager implements ClientWatchManager {
             }
             addPersistentWatches(clientPath, result);
             break;
+            /**
+             * NodeChildrenChanged:
+             * getChildren的watcher
+             */
         case NodeChildrenChanged:
             synchronized (childWatches) {
                 addTo(childWatches.remove(clientPath), result);
             }
             addPersistentWatches(clientPath, result);
             break;
+            /**
+             * NodeDeleted:
+             * getData、exist、getChildren的watcher
+             */
         case NodeDeleted:
             synchronized (dataWatches) {
                 addTo(dataWatches.remove(clientPath), result);

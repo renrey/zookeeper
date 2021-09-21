@@ -84,6 +84,10 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 // We want to queue the request to be processed before we submit
                 // the request to the leader so that we are ready to receive
                 // the response
+                /**
+                 * 提交到下一个RequestProcessor
+                 * @see CommitProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 */
                 maybeSendRequestToNextProcessor(request);
 
                 if (request.isThrottled()) {
@@ -95,11 +99,17 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 // path, but different from others, we need to keep track
                 // of the sync operations this follower has pending, so we
                 // add it to pendingSyncs.
+                /**
+                 * 根据请求类型，判断是否需要转发到leader执行
+                 */
                 switch (request.type) {
                 case OpCode.sync:
                     zks.pendingSyncs.add(request);
                     zks.getFollower().request(request);
                     break;
+                    /**
+                     * 正常操作需要转发，  Leader.REQUEST类型请求
+                     */
                 case OpCode.create:
                 case OpCode.create2:
                 case OpCode.createTTL:
@@ -113,6 +123,9 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 case OpCode.check:
                     zks.getFollower().request(request);
                     break;
+                    /**
+                     * session相关不用转发
+                     */
                 case OpCode.createSession:
                 case OpCode.closeSession:
                     // Don't forward local sessions to the leader.

@@ -34,6 +34,10 @@ public class WatchManagerFactory {
 
     public static IWatchManager createWatchManager() throws IOException {
         String watchManagerName = System.getProperty(ZOOKEEPER_WATCH_MANAGER_NAME);
+        /**
+         * 当前默认使用WatchManager
+         * 如果Watcher的负载高可以使用WatchManagerOptimized，需要手动配置zookeeper.watchManagerName
+         */
         if (watchManagerName == null) {
             watchManagerName = WatchManager.class.getName();
         }

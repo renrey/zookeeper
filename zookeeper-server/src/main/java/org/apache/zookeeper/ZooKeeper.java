@@ -280,14 +280,21 @@ public class ZooKeeper implements AutoCloseable {
          * add the watch on the path.
          */
         public void register(int rc) {
+            // 需要返回OK
             if (shouldAddWatch(rc)) {
+                // watchManager中对应watches-Map（Watcher集合）
                 Map<String, Set<Watcher>> watches = getWatches(rc);
                 synchronized (watches) {
+                    /**
+                     * watcher真正在本地保存，请求只是发送：
+                     * 把当前packet的watcher加入到watchManager中对应的watches-Map, key为path！！！
+                     */
                     Set<Watcher> watchers = watches.get(clientPath);
                     if (watchers == null) {
                         watchers = new HashSet<Watcher>();
                         watches.put(clientPath, watchers);
                     }
+
                     watchers.add(watcher);
                 }
             }
@@ -334,6 +341,7 @@ public class ZooKeeper implements AutoCloseable {
 
         @Override
         protected Map<String, Set<Watcher>> getWatches(int rc) {
+            // cnxn中WatchManager保存的dataWatches（Map）
             return getWatchManager().getDataWatches();
         }
 
@@ -1041,17 +1049,24 @@ public class ZooKeeper implements AutoCloseable {
         ConnectStringParser connectStringParser = new ConnectStringParser(connectString);
         this.hostProvider = hostProvider;
 
+        /**
+         *
+         * @see ClientCnxnSocketNIO 连接的socket类（先创建Selector）
+         */
         cnxn = new ClientCnxn(
             connectStringParser.getChrootPath(),
             hostProvider,
             sessionTimeout,
             this.clientConfig,
             watcher,
-            getClientCnxnSocket(),
+            getClientCnxnSocket(), // ClientCnxnSocketNIO
             sessionId,
             sessionPasswd,
             canBeReadOnly);
         cnxn.seenRwServerBefore = true; // since user has provided sessionId
+        /**
+         * 启动线程
+         */
         cnxn.start();
     }
 
@@ -1507,6 +1522,7 @@ public class ZooKeeper implements AutoCloseable {
         PathUtils.validatePath(clientPath, createMode.isSequential());
         EphemeralType.validateTTL(createMode, -1);
 
+        // 如果client配置默认path，就在path前补充，作为完整的path
         final String serverPath = prependChroot(clientPath);
 
         RequestHeader h = new RequestHeader();
@@ -1518,6 +1534,9 @@ public class ZooKeeper implements AutoCloseable {
         request.setFlags(createMode.toFlag());
         request.setPath(serverPath);
         request.setAcl(acl);
+        /**
+         * 包装成Packet对象，放入cnxn的outGoingQueue中，等待发送
+         */
         cnxn.queuePacket(h, r, request, response, cb, clientPath, serverPath, ctx, null);
     }
 
@@ -1958,6 +1977,7 @@ public class ZooKeeper implements AutoCloseable {
 
         // the watch contains the un-chroot path
         WatchRegistration wcb = null;
+        // watcher 会被DataWatchRegistration封装
         if (watcher != null) {
             wcb = new DataWatchRegistration(watcher, clientPath);
         }
@@ -1966,10 +1986,15 @@ public class ZooKeeper implements AutoCloseable {
 
         RequestHeader h = new RequestHeader();
         h.setType(ZooDefs.OpCode.getData);
+        // 封装GetDataRequest请求对象
         GetDataRequest request = new GetDataRequest();
         request.setPath(serverPath);
         request.setWatch(watcher != null);
         GetDataResponse response = new GetDataResponse();
+        /**
+         * 1。提交到outgoingQueue发送
+         * 2。等待收到packet的响应
+         */
         ReplyHeader r = cnxn.submitRequest(h, request, response, wcb);
         if (r.getErr() != 0) {
             throw KeeperException.create(KeeperException.Code.get(r.getErr()), clientPath);
@@ -1977,6 +2002,7 @@ public class ZooKeeper implements AutoCloseable {
         if (stat != null) {
             DataTree.copyStat(response.getStat(), stat);
         }
+        // 把响应的Data返回
         return response.getData();
     }
 

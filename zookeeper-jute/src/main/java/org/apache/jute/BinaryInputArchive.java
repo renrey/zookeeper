@@ -109,6 +109,7 @@ public class BinaryInputArchive implements InputArchive {
     }
 
     public String readString(String tag) throws IOException {
+        // 1。读取个int4字节，代表数据长度
         int len = in.readInt();
         if (len == -1) {
             return null;

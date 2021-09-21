@@ -89,11 +89,14 @@ public class QuorumMaj implements QuorumVerifier {
         for (Entry<Object, Object> entry : props.entrySet()) {
             String key = entry.getKey().toString();
             String value = entry.getValue().toString();
-
+            // 获取所有server.开头的，等于集群节点
             if (key.startsWith("server.")) {
                 int dot = key.indexOf('.');
+                // . 后面就是sid
                 long sid = Long.parseLong(key.substring(dot + 1));
+                // 每个节点都创建一个QuorumServer
                 QuorumServer qs = new QuorumServer(sid, value);
+                // 放入allMembers、节点对应的类型Map（follower or observer）
                 allMembers.put(Long.valueOf(sid), qs);
                 if (qs.type == LearnerType.PARTICIPANT) {
                     votingMembers.put(Long.valueOf(sid), qs);

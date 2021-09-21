@@ -51,6 +51,7 @@ public final class ConnectStringParser {
      */
     public ConnectStringParser(String connectString) {
         // parse out chroot, if any
+        // 如果connectString配有/，会把第一个/开始的作为默认路径chrootPath
         int off = connectString.indexOf('/');
         if (off >= 0) {
             String chrootPath = connectString.substring(off);
