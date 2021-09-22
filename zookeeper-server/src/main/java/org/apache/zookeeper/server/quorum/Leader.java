@@ -1327,6 +1327,9 @@ public class Leader extends LearnerMaster {
 
         byte[] data = SerializeUtils.serializeRequest(request);
         proposalStats.setLastBufferSize(data.length);
+        /**
+         * 创建PROPOSAL请求
+         */
         QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
 
         Proposal p = new Proposal();
@@ -1349,7 +1352,9 @@ public class Leader extends LearnerMaster {
             lastProposed = p.packet.getZxid();
             // outstandingProposals 存放proposal
             outstandingProposals.put(lastProposed, p);
-            // 把proposal发给每个follower
+            /**
+             * 把proposal请求发给每个follower（LearnerHandler）
+             */
             sendPacket(pp);
         }
         ServerMetrics.getMetrics().PROPOSAL_COUNT.add(1);

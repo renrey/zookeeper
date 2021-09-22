@@ -108,7 +108,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                     zks.getFollower().request(request);
                     break;
                     /**
-                     * 正常操作需要转发，  Leader.REQUEST类型请求
+                     * 修改操作（crud）需要转发，  Leader.REQUEST类型请求
                      */
                 case OpCode.create:
                 case OpCode.create2:

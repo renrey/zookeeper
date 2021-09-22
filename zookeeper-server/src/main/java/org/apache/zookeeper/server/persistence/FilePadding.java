@@ -75,6 +75,7 @@ public class FilePadding {
     long padFile(FileChannel fileChannel) throws IOException {
         long newFileSize = calculateFileSizeWithPadding(fileChannel.position(), currentSize, preAllocSize);
         if (currentSize != newFileSize) {
+            // 填充pad
             fileChannel.write((ByteBuffer) fill.position(0), newFileSize - fill.remaining());
             currentSize = newFileSize;
         }

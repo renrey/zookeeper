@@ -269,6 +269,7 @@ public class FileTxnLog implements TxnLog, Closeable {
 
     @Override
     public synchronized boolean append(TxnHeader hdr, Record txn, TxnDigest digest) throws IOException {
+        // read请求，不会继续
         if (hdr == null) {
             return false;
         }
@@ -283,16 +284,23 @@ public class FileTxnLog implements TxnLog, Closeable {
         }
         if (logStream == null) {
             LOG.info("Creating new log file: {}", Util.makeLogName(hdr.getZxid()));
-
+            /**
+             * 日志文件：log.zxid
+             */
             logFileWrite = new File(logDir, Util.makeLogName(hdr.getZxid()));
             fos = new FileOutputStream(logFileWrite);
+            // 创建 缓冲输出流（8192字节的缓存）
             logStream = new BufferedOutputStream(fos);
             oa = BinaryOutputArchive.getArchive(logStream);
             FileHeader fhdr = new FileHeader(TXNLOG_MAGIC, VERSION, dbId);
             fhdr.serialize(oa, "fileheader");
             // Make sure that the magic number is written before padding.
+            // 保证fileheader写入磁盘
             logStream.flush();
+
+            // log file当前的长度（字节） 更新到filePadding
             filePadding.setCurrentSize(fos.getChannel().position());
+            // streamsToFlush保存原始文件流
             streamsToFlush.add(fos);
         }
         filePadding.padFile(fos.getChannel());
@@ -300,6 +308,7 @@ public class FileTxnLog implements TxnLog, Closeable {
         if (buf == null || buf.length == 0) {
             throw new IOException("Faulty serialization for header " + "and txn");
         }
+        // 计算crc，然后写入流中
         Checksum crc = makeChecksumAlgorithm();
         crc.update(buf, 0, buf.length);
         oa.writeLong(crc.getValue(), "txnEntryCRC");

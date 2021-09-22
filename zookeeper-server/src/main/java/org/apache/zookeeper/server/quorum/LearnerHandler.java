@@ -765,6 +765,9 @@ public class LearnerHandler extends ZooKeeperThread {
                     ServerMetrics.getMetrics().REVALIDATE_COUNT.add(1);
                     learnerMaster.revalidateSession(qp, this);
                     break;
+                    /**
+                     * follower转发write请求
+                     */
                 case Leader.REQUEST:
                     bb = ByteBuffer.wrap(qp.getData());
                     sessionId = bb.getLong();

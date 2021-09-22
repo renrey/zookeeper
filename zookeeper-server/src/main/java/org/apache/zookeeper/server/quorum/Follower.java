@@ -178,7 +178,9 @@ public class Follower extends Learner {
         case Leader.PING:
             ping(qp);
             break;
-        // proposal
+            /**
+             * leader的PROPOSAL （2pc的pre阶段）
+             */
         case Leader.PROPOSAL:
             ServerMetrics.getMetrics().LEARNER_PROPOSAL_RECEIVED_COUNT.add(1);
             TxnLogEntry logEntry = SerializeUtils.deserializeTxn(qp.getData());
