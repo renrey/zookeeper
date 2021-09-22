@@ -510,6 +510,7 @@ public class ClientCnxn {
         }
 
         public void queueEvent(WatchedEvent event) {
+            // 取出并提交Watcher到waitingEvents
             queueEvent(event, null);
         }
 
@@ -526,6 +527,7 @@ public class ClientCnxn {
                  * 获取本次WatchEvent会触发的watcher，并且会把这些watcher从WatcherManager移除！！！
                  * 一般都会执行这里
                  */
+                // type为none，返回Zookeeper的默认watcher 和已有watcher，清空已有watcher
                 watchers = watchManager.materialize(event.getState(), event.getType(), event.getPath());
             } else {
                 watchers = new HashSet<>(materializedWatchers);
@@ -535,6 +537,7 @@ public class ClientCnxn {
              */
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
+            // 等于把path对于watchType的watcher取出（删除），提交waitingEvents等待执行回调
             waitingEvents.add(pair);
         }
 
@@ -574,6 +577,7 @@ public class ClientCnxn {
                     if (event == eventOfDeath) {
                         wasKilled = true;
                     } else {
+                        // 执行
                         processEvent(event);
                     }
                     if (wasKilled) {
@@ -1192,6 +1196,7 @@ public class ClientCnxn {
         private void startConnect(InetSocketAddress addr) throws IOException {
             // initializing it for new connection
             saslLoginFailed = false;
+            // 不是第一次连接，先睡眠一会儿
             if (!isFirstConnect) {
                 try {
                     Thread.sleep(ThreadLocalRandom.current().nextLong(1000));
@@ -1262,6 +1267,7 @@ public class ClientCnxn {
                             serverAddress = rwServerAddress;
                             rwServerAddress = null;
                         } else {
+                            // 随机选择一个地址，环形选择
                             serverAddress = hostProvider.next(1000);
                         }
                         onConnecting(serverAddress);
@@ -1402,11 +1408,15 @@ public class ClientCnxn {
         }
 
         private void cleanAndNotifyState() {
+            // 关闭连接，完成失败请求
             cleanup();
             if (state.isAlive()) {
+                // 发布DISCONNECTED事件, 为了提交了监听事件，Zookeeper默认监听到，清空watcher
                 eventThread.queueEvent(new WatchedEvent(Event.EventType.None, Event.KeeperState.Disconnected, null));
             }
+            // 重置网络初始化时间
             clientCnxnSocket.updateNow();
+            // 重置最近发送、接收请求的时间
             clientCnxnSocket.updateLastSendAndHeard();
         }
 
@@ -1461,7 +1471,9 @@ public class ClientCnxn {
         }
 
         private void cleanup() {
+            // 1. 断开连接
             clientCnxnSocket.cleanup();
+            // 2. 完成已发送的请求，完成
             synchronized (pendingQueue) {
                 for (Packet p : pendingQueue) {
                     conLossPacket(p);
@@ -1471,6 +1483,7 @@ public class ClientCnxn {
             // We can't call outgoingQueue.clear() here because
             // between iterating and clear up there might be new
             // packets added in queuePacket().
+            // 3. 完成未发送请求，
             Iterator<Packet> iter = outgoingQueue.iterator();
             while (iter.hasNext()) {
                 Packet p = iter.next();

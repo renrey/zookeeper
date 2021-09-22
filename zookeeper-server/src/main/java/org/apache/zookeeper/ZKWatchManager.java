@@ -349,12 +349,16 @@ class ZKWatchManager implements ClientWatchManager {
     ) {
         final Set<Watcher> result = new HashSet<>();
         // 根据EventType，从对应类型的watches集合取出对应path的Watcher
+        // 从WatchManager取出删除path节点的watcher
         switch (type) {
         case None:
+            // 默认watcher
             if (defaultWatcher != null) {
                 result.add(defaultWatcher);
             }
 
+            // disableAutoWatchReset true 默认关闭自动watch重置
+            // 非连接状态，进行watcher清理
             boolean clear = disableAutoWatchReset && state != Watcher.Event.KeeperState.SyncConnected;
             synchronized (dataWatches) {
                 for (Set<Watcher> ws : dataWatches.values()) {

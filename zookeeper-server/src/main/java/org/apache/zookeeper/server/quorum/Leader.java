@@ -704,6 +704,9 @@ public class Leader extends LearnerMaster {
              * 注意：对每个follower的每个LearnerHandler也在等待
              */
             try {
+                /**
+                 * leader 通知ack 等待过半follower 响应，才能继续
+                 */
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -769,6 +772,10 @@ public class Leader extends LearnerMaster {
             // If not null then shutdown this leader
             String shutdownMessage = null;
 
+            /**
+             * 每隔ticketTime/2 ，执行一次，查看连接的follower是否超过一半，
+             * 少于一半就会关闭
+             */
             while (true) {
                 synchronized (this) {
                     /**
@@ -777,6 +784,7 @@ public class Leader extends LearnerMaster {
                     long start = Time.currentElapsedTime();
                     long cur = start;
                     long end = start + self.tickTime / 2;
+                    // 每隔ticketTime/2 ，执行
                     while (cur < end) {
                         wait(end - cur);
                         cur = Time.currentElapsedTime();
@@ -798,6 +806,7 @@ public class Leader extends LearnerMaster {
                         syncedAckSet.addQuorumVerifier(self.getLastSeenQuorumVerifier());
                     }
 
+                    // 收集当前可以收到的follower响应数量
                     syncedAckSet.addAck(self.getId());
 
                     /**

@@ -852,6 +852,10 @@ public class QuorumCnxManager {
      * Check if all queues are empty, indicating that all messages have been delivered.
      */
     boolean haveDelivered() {
+        /**
+         * 用来判断上一个投票是否已发送
+         * 这里的判断有点抽象，只要有一个SendWorker（SendQueue）取出就算作是这个投票已发送
+         */
         for (BlockingQueue<ByteBuffer> queue : queueSendMap.values()) {
             final int queueSize = queue.size();
             LOG.debug("Queue size: {}", queueSize);

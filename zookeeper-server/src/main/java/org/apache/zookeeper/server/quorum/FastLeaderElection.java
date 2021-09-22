@@ -779,7 +779,9 @@ public class FastLeaderElection implements Election {
      *            Identifier of the vote received last
      * @return the SyncedLearnerTracker with vote details
      */
+    // vote : 当前节点最新的选票
     protected SyncedLearnerTracker getVoteTracker(Map<Long, Vote> votes, Vote vote) {
+        // 加入判断机制, 默认是过半
         SyncedLearnerTracker voteSet = new SyncedLearnerTracker();
         // 加入选举成功的检验器
         voteSet.addQuorumVerifier(self.getQuorumVerifier());
@@ -794,6 +796,7 @@ public class FastLeaderElection implements Election {
          */
         /**
          * 从recvset导入，跟这个选票相同leader的选票
+         * 遍历当前轮次选举收到的每个节点选票，更本节点选票的相同的选票加入到voteSet
          */
         for (Map.Entry<Long, Vote> entry : votes.entrySet()) {
             if (vote.equals(entry.getValue())) {
@@ -985,6 +988,8 @@ public class FastLeaderElection implements Election {
             // 向每个选举的节点发送投票请求
             /**
              * 发送本节点的初始选票（就是选择本节点）
+             * 初始发送选票
+             * 选票的对象就是自己
              */
             sendNotifications();
 
@@ -1085,11 +1090,11 @@ public class FastLeaderElection implements Election {
                                     Long.toHexString(logicalclock.get()));
                             break;
                             /**
-                             *  本机更新选票为这个选票
+                             *  还是同一轮，比较是否比本地的新，是就投票给这个节点
                              *  条件：
-                             *  集群版本比当前大
-                             *  集群版本相同时，选票的zxid比本机的大
-                             *      如果zxid相同，就看选票的节点id是否比本机大
+                             *  1. 集群版本比当前大
+                             *  2. 集群版本相同时，选票的zxid比本机的大
+                             *  3. 如果zxid相同，就看选票的节点id是否比本机大
                               */
                         } else if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch, proposedLeader, proposedZxid, proposedEpoch)) {
                             // 更新提案信息
@@ -1106,7 +1111,9 @@ public class FastLeaderElection implements Election {
                             Long.toHexString(n.electionEpoch));
 
                         // don't care about the version if it's in LOOKING state
-                        // 把已收到的选票归档
+                        /**
+                         * 把已收到的选票进行归档
+                          */
                         recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch));
                         // 这个选票的投票情况Tracker，相同leader的选票set
                         voteSet = getVoteTracker(recvset, new Vote(proposedLeader, proposedZxid, logicalclock.get(), proposedEpoch));
