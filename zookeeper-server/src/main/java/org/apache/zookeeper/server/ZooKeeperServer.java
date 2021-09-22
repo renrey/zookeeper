@@ -1210,19 +1210,16 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 setLocalSessionFlag(si);
                 /**
                  * 2. PrepRequestProcessor 处理请求
-                 * 调用链：PrepRequestProcessor -> syncProcessor -> finalProcessor
                  *
                  *  Leader : LeaderRequestProcessor ->PrepRequestProcessor -> ProposalRequestProcessor ->
                  *    CommitProcessor -> ToBeAppliedRequestProcessor ->finalProcessor
-                 * 通用
-                 * @see org.apache.zookeeper.server.PrepRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
-                 * @see org.apache.zookeeper.server.SyncRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
-                 * @see FinalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
                  * leader
                  * @see LeaderRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see PrepRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
                  * @see ProposalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
                  * @see CommitProcessor#processRequest(org.apache.zookeeper.server.Request)
                  * @see Leader.ToBeAppliedRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                 * @see FinalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
                  */
                 firstProcessor.processRequest(si);
                 if (si.cnxn != null) {

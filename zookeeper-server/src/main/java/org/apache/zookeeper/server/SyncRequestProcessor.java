@@ -112,6 +112,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     private long getRemainingDelay() {
         long flushDelay = zks.getFlushDelay();
         long duration = Time.currentElapsedTime() - lastFlushTime;
+        // 如果没配置flushDelay，只会返回0
         if (duration < flushDelay) {
             return flushDelay - duration;
         }
@@ -127,7 +128,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         long flushDelay = zks.getFlushDelay();
         // 一次执行的个数，默认1000
         long maxBatchSize = zks.getMaxBatchSize();
-        // 是否到时间
+        // 是否到时间, 但是默认没有设置flushDelay
         if ((flushDelay > 0) && (getRemainingDelay() == 0)) {
             return true;
         }
@@ -166,18 +167,25 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             while (true) {
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
 
+                // 依赖于flushDelay，但是默认没配置，所以pollTime=0
+                // RemainingDelay: 上次flush的时间点到flushDelay还有多久
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
-                // 先有限时获取
+                /**
+                 * 有时间的阻塞获取，主要为了加入请求后，超时flush
+                 * 但默认是没有flushDelay，所以这里直接获取
+                 */
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
 
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
                     /**
-                     * 万一超过pollTime没有集群同步（向其他节点）请求提交，直接flush刷盘
+                     * 超时刷盘：
+                     * 万一超过pollTime，没有其他请求提交到队列，需要刷盘flush，直接flush刷盘
+                     * 但是默认没开启超时，所以如果没有连续log写入，就直接刷盘了
                      */
                     flush();
                     /**
-                     * 阻塞的地方
+                     * 阻塞获取
                       */
                     si = queuedRequests.take();
                 }
@@ -191,8 +199,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 // track the number of records written to the log
                 /**
-                 * org.apache.zookeeper.server.ZKDatabase#append(org.apache.zookeeper.server.Request)
-                 * append 新增日志
+                 * append：尝试向本地的db新增这条请求日志(创建log.zxid的log文件，此时是写入缓冲区，并未刷盘)
                   */
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
                     if (shouldSnapshot()) {
@@ -217,6 +224,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                         }
                     }
                 // 这里是ack响应才会进来
+                    /**
+                     * read请求（append返回false）且前面没有待flush的write(toFlush.isEmpty())
+                     * 为啥判断有没有待flush？为了请求顺序执行，flush执行了，才会执行读
+                     */
                 } else if (toFlush.isEmpty()) {
                     // optimization for read heavy workloads
                     // iff this is a read or a throttled request(which doesn't need to be written to the disk),
@@ -238,19 +249,24 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     continue;
                 }
-                // toFlush (待刷盘队列) 加入
+                /**
+                 * 放入toFlush (待刷盘队列) ：
+                 * 1. write请求
+                 * 2. 前面有待flush的write（保证执行顺序）
+                 */
                 toFlush.add(si);
                 /**
-                 * 是否可以flush刷盘
-                 * 默认是toFlush数量等于1000
+                 * 判断是否可以flush刷盘：
+                 * 1. toFlush数量等于1000
+                 * 2. 是否超时（但默认没开启）
                  */
                 if (shouldFlush()) {
                     flush();
                 }
                 /**
-                 * 因此，触发刷盘有2种情况：
-                 * 1. 连续进行1000条请求
-                 * 2. 超过polltime，没有请求提交
+                 * 因此，默认触发刷盘有2种情况：
+                 * 1. 连续进行1000条请求写入
+                 * 2. 写入一条log到缓冲区后，没有连续的log，就直接flush了
                  */
                 ServerMetrics.getMetrics().SYNC_PROCESS_TIME.add(Time.currentElapsedTime() - startProcessTime);
             }
@@ -268,6 +284,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         ServerMetrics.getMetrics().BATCH_SIZE.add(toFlush.size());
 
         long flushStartTime = Time.currentElapsedTime();
+        /**
+         * 1. 字节流的flush
+         */
         zks.getZKDatabase().commit();
         ServerMetrics.getMetrics().SYNC_PROCESSOR_FLUSH_TIME.add(Time.currentElapsedTime() - flushStartTime);
 
@@ -312,7 +331,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.syncQueueStartTime = Time.currentElapsedTime();
 
         /**
-         * 加入自己队列中,等待自己的线程执行
+         * request提交到自己队列中,等待自己的线程执行
+         * 主要是把这个请求刷盘
          * @see SyncRequestProcessor#run()
          */
         queuedRequests.add(request);

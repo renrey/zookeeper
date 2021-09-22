@@ -80,30 +80,34 @@ public class ProposalRequestProcessor implements RequestProcessor {
         } else {
             // 默认true会执行
             /**
-             * 先执行下一个, 一般为CommitProcessor
+             * 先执行下一个, 这里主要是把请求提交到commitProcessor的queuedRequests队列就回来了，而这条链路需要等到过半ack才会有下文
              * @see CommitProcessor#processRequest(org.apache.zookeeper.server.Request)
              */
             if (shouldForwardToNextProcessor(request)) {
                 nextProcessor.processRequest(request);
             }
             /**
-             * 注意,CommitProcessor提交队列异步执行,此时是有两条分支：
+             * 注意 这里是有3链路
              * 1.CommitProcessor -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
              *    这条分支做的是本节点的zk数据库处理
              * 2. ProposalRequestProcessor（发送proposal给follower） -> syncProcessor（写入操作日志，刷盘，快照） -> AckRequestProcessor (处理ack响应)
              *    这条分支负责proposal发布，proposal日志写入，ack响应处理 ，即同步相关的操作
+             *    1. CommitProcessor 提交到队列
+             *    2. ProposalRequestProcessor.propose 给follower发送PROPOSAL
+             *    3. syncProcessor(请求log写入磁盘) -> AckRequestProcessor(等待过半响应)
+             *    4.  CommitProcessor -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
              */
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
                 try {
                     /**
-                     * 发起proposal, 向其他follower同步
+                     * 创建proposal（注意zxid在上一步PreRequestProcessor已经生成）, 向其他follower发送PROPOSAL请求
                       */
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
-                // 使用 syncProcessor 处理请求
+                // 使用 syncProcessor 请求写入磁盘
                 syncProcessor.processRequest(request);
             }
         }

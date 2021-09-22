@@ -776,10 +776,19 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     protected void pRequest(Request request) throws RequestProcessorException {
         // LOG.info("Prep>>> cxid = " + request.cxid + " type = " +
         // request.type + " id = 0x" + Long.toHexString(request.sessionId));
+        /**
+         * header和txn置空
+         */
         request.setHdr(null);
         request.setTxn(null);
 
-        // 设置header 和 txn
+        /**
+         * 重新设置header 和 txn：
+         * 1. 生成zxid，hxzid自增！！！（header）
+         * 2. 只有write请求才会生成
+         *
+         * 注意：后面就依靠是否空，来判断是write还是read
+         */
         if (!request.isThrottled()) {
           pRequestHelper(request);
         }
@@ -788,6 +797,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         long timeFinishedPrepare = Time.currentElapsedTime();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
         // 下一个处理器
+        /**
+         * @see org.apache.zookeeper.server.quorum.ProposalRequestProcessor#processRequest
+         */
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
     }
