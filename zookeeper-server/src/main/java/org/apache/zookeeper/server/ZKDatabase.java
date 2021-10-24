@@ -496,6 +496,9 @@ public class ZKDatabase {
      * datatree/zkdatabase
      */
     public ProcessTxnResult processTxn(TxnHeader hdr, Record txn, TxnDigest digest) {
+        /**
+         * @see org.apache.zookeeper.server.DataTree#processTxn(org.apache.zookeeper.txn.TxnHeader, org.apache.jute.Record, boolean)
+         */
         return dataTree.processTxn(hdr, txn, digest);
     }
 
@@ -664,7 +667,9 @@ public class ZKDatabase {
      * roll the underlying log
      */
     public void rollLog() throws IOException {
+        // 1。取消指向当前log，并把缓存flush
         this.snapLog.rollLog();
+        // 2。重置当前log的txn请求数量
         resetTxnCount();
     }
 

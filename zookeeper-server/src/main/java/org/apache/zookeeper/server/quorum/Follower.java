@@ -179,7 +179,7 @@ public class Follower extends Learner {
             ping(qp);
             break;
             /**
-             * leader的PROPOSAL （2pc的pre阶段）
+             * leader的PROPOSAL （2pc的pre第一阶段），需要写入本地
              */
         case Leader.PROPOSAL:
             ServerMetrics.getMetrics().LEARNER_PROPOSAL_RECEIVED_COUNT.add(1);
@@ -201,7 +201,7 @@ public class Follower extends Learner {
                 self.setLastSeenQuorumVerifier(qv, true);
             }
 
-            //记录日志、发送ack
+            // 记录日志、发送ack
             fzk.logRequest(hdr, txn, digest);
             if (hdr != null) {
                 /*
@@ -221,8 +221,12 @@ public class Follower extends Learner {
                 ServerMetrics.getMetrics().OM_PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - startTime);
             }
             break;
+            /**
+             * 2pc的commit完成阶段
+             */
         case Leader.COMMIT:
             ServerMetrics.getMetrics().LEARNER_COMMIT_RECEIVED_COUNT.add(1);
+            // 执行commit的操作
             fzk.commit(qp.getZxid());
             if (om != null) {
                 final long startTime = Time.currentElapsedTime();

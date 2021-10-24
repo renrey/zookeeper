@@ -156,10 +156,11 @@ abstract class ClientCnxnSocket {
             LOG.warn("Connected to an old server; r-o mode will be unavailable");
         }
         /**
-         * sessionId
+         * 设置sessionId
          */
         this.sessionId = conRsp.getSessionId();
         // 监听全局的watcher
+        // 把一些信息和sessionId设置到ClientCnxn
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId, conRsp.getPasswd(), isRO);
     }
 

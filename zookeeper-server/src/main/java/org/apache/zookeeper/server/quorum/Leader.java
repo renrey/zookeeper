@@ -1002,7 +1002,9 @@ public class Leader extends LearnerMaster {
         // in order to be committed, a proposal must be accepted by a quorum.
         //
         // getting a quorum from all necessary configurations.
-        // 是否已有多数ack（默认是否超过半数）
+        /**
+         * 是否已有多数ack（默认是否超过半数，包含leader在内）
+         */
         if (!p.hasAllQuorums()) {
             return false;
         }
@@ -1018,7 +1020,7 @@ public class Leader extends LearnerMaster {
 
         outstandingProposals.remove(zxid);
 
-        // 加入toBeApplied, 待确认成功
+        // 加入toBeApplied, 待应用执行
         if (p.request != null) {
             toBeApplied.add(p);
         }
@@ -1051,10 +1053,21 @@ public class Leader extends LearnerMaster {
             informAndActivate(p, designatedLeader);
         } else {
             p.request.logLatency(ServerMetrics.getMetrics().QUORUM_ACK_LATENCY);
+            /**
+             * 1。向所有follower发送COMMIT请求，告知其他follower已经commit成功
+             */
             commit(zxid);
+            /**
+             * 2。发送INFORM请求（连内容）给observer
+             */
             inform(p);
         }
+        /**
+         * 3。往commitProcessor把request加入CommittedRequests中，等于在leader本地已经commit了
+         */
         zk.commitProcessor.commit(p.request);
+
+        // sync操作相关
         if (pendingSyncs.containsKey(zxid)) {
             for (LearnerSyncRequest r : pendingSyncs.remove(zxid)) {
                 sendSync(r);
@@ -1074,6 +1087,7 @@ public class Leader extends LearnerMaster {
      */
     @Override
     public synchronized void processAck(long sid, long zxid, SocketAddress followerAddr) {
+        // 重启会变为false
         if (!allowedToCommit) {
             return; // last op committed was a leader change - from now on
         }
@@ -1108,6 +1122,7 @@ public class Leader extends LearnerMaster {
             // The proposal has already been committed
             return;
         }
+        // 拿回这个zxid的Proposal
         Proposal p = outstandingProposals.get(zxid);
         if (p == null) {
             LOG.warn("Trying to commit future proposal: zxid 0x{} from {}", Long.toHexString(zxid), followerAddr);
@@ -1119,7 +1134,10 @@ public class Leader extends LearnerMaster {
         }
         // proposal 加入这个follower的ack （往ackset添加）
         p.addAck(sid);
-        // 尝试leader commit这个proposal
+        /**
+         * 尝试commit这个proposal（判断是否过半ack）!!!
+         * 把Proposal更新成commit的地方
+         */
         boolean hasCommitted = tryToCommit(p, zxid, followerAddr);
 
         // If p is a reconfiguration, multiple other operations may be ready to be committed,
@@ -1186,6 +1204,7 @@ public class Leader extends LearnerMaster {
             // requests, for which we will have a hdr. We can't simply use
             // request.zxid here because that is set on read requests to equal
             // the zxid of the last write op.
+            // write请求才会执行
             if (request.getHdr() != null) {
                 long zxid = request.getHdr().getZxid();
                 Iterator<Proposal> iter = leader.toBeApplied.iterator();

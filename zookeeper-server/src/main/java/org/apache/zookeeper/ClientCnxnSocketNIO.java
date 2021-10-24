@@ -92,8 +92,11 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     recvCount.getAndIncrement();
                     // 报文长度，并创建对应长度的incomingBuffer
                     readLength();
-                // 未初始化完，证明接收的是Connect响应（注册session）
+                    /**
+                     * 未初始化(注册)完，证明接收的是Connect响应
+                     */
                 } else if (!initialized) {
+                    // connect请求的响应处理
                     readConnectResult();
                     enableRead();
                     if (findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress()) != null) {

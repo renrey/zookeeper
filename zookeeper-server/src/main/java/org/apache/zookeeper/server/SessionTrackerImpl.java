@@ -46,8 +46,10 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     private static final Logger LOG = LoggerFactory.getLogger(SessionTrackerImpl.class);
 
+    // sessionId - Session对象
     protected final ConcurrentHashMap<Long, SessionImpl> sessionsById = new ConcurrentHashMap<Long, SessionImpl>();
 
+    // 过期队列
     private final ExpiryQueue<SessionImpl> sessionExpiryQueue;
 
     protected final ConcurrentMap<Long, Integer> sessionsWithTimeout;
@@ -109,11 +111,16 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     public SessionTrackerImpl(SessionExpirer expirer, ConcurrentMap<Long, Integer> sessionsWithTimeout, int tickTime, long serverId, ZooKeeperServerListener listener) {
         super("SessionTracker", listener);
+        // 这个就是各种ZooKeeperServer对象
         this.expirer = expirer;
+        // 过期队列
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
         // 与ZkDatabase的sessionsWithTimeout绑定
         this.sessionsWithTimeout = sessionsWithTimeout;
+        // 下一个sessionId
+        // 初始：当前时间<< 24 >>> 8 | myid << 56
         this.nextSessionId.set(initializeNextSessionId(serverId));
+        // 把sessionsWithTimeout里的session初始化成对象，主要是恢复使用
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
             trackSession(e.getKey(), e.getValue());
         }
@@ -159,15 +166,20 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     public void run() {
         try {
             while (running) {
+                // 获取距离下一个过期时间点nextExpirationTime还有多久，也就是需要等待时间
                 long waitTime = sessionExpiryQueue.getWaitTime();
                 if (waitTime > 0) {
                     Thread.sleep(waitTime);
                     continue;
                 }
-
+                /**
+                 * 到nextExpirationTime的时间点，从过期队列中获取这个点过期的集合（并且取出这个集合、更新下次过期时间）
+                 */
                 for (SessionImpl s : sessionExpiryQueue.poll()) {
                     ServerMetrics.getMetrics().STALE_SESSIONS_EXPIRED.add(1);
+                    // 更新isClosing为true，代表已关闭
                     setSessionClosing(s.sessionId);
+                    // 提交closeSession请求给requestThrottler（等于client自己发起了closeSession）
                     expirer.expire(s);
                 }
             }
@@ -179,17 +191,17 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     public synchronized boolean touchSession(long sessionId, int timeout) {
         SessionImpl s = sessionsById.get(sessionId);
-
+        // 不存在，代表已非法的session
         if (s == null) {
             logTraceTouchInvalidSession(sessionId, timeout);
             return false;
         }
-
+        // isClosing，代表已过期、已关闭
         if (s.isClosing()) {
             logTraceTouchClosingSession(sessionId, timeout);
             return false;
         }
-
+        // 更新session过期队列中的下次过期时间
         updateSessionExpiry(s, timeout);
         return true;
     }
@@ -298,7 +310,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                 "SessionTrackerImpl --- " + actionStr
                 + " session 0x" + Long.toHexString(id) + " " + sessionTimeout);
         }
-        // 延长过期时间
+        // 把session对象放入（or更新）队列中
         updateSessionExpiry(session, sessionTimeout);
         return added;
     }
@@ -315,14 +327,17 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         LOG.debug("Checking session 0x{}", Long.toHexString(sessionId));
         SessionImpl session = sessionsById.get(sessionId);
 
+        // session无效
         if (session == null) {
             throw new KeeperException.UnknownSessionException();
         }
 
+        // session过期
         if (session.isClosing()) {
             throw new KeeperException.SessionExpiredException();
         }
 
+        // 检验session是否还是在原来的集群节点上（session迁移到其他节点）
         if (session.owner == null) {
             session.owner = owner;
         } else if (session.owner != owner) {

@@ -124,6 +124,7 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
         }
         Request request = pendingTxns.remove();
         request.logLatency(ServerMetrics.getMetrics().COMMIT_PROPAGATION_LATENCY);
+        // 提交到committedRequests
         commitProcessor.commit(request);
     }
 

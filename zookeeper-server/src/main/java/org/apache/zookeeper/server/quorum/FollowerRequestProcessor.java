@@ -124,11 +124,12 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                     zks.getFollower().request(request);
                     break;
                     /**
-                     * session相关不用转发
+                     * session默认需要转发
                      */
                 case OpCode.createSession:
                 case OpCode.closeSession:
                     // Don't forward local sessions to the leader.
+                    // 默认没开启
                     if (!request.isLocalSession()) {
                         zks.getFollower().request(request);
                     }

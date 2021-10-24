@@ -186,6 +186,7 @@ public class NIOServerCnxn extends ServerCnxn {
             packetReceived(4 + incomingBuffer.remaining());
             /**
              * session未注册完（Connect请求），所以先处理Connect请求
+             * --- 因为使用的sessionId是在server本地保存的，直接通过对应ServerCnxn获取，所以要先注册
              */
             if (!initialized) {
                 readConnectRequest();
@@ -609,10 +610,19 @@ public class NIOServerCnxn extends ServerCnxn {
 
     private void close() {
         setStale();
+        /**
+         *
+         * NIOServerCnxnFactory移除：
+         * 过期队列、cnxns集合、sessionMap（sessionId映射cnxn）
+         */
         if (!factory.removeCnxn(this)) {
             return;
         }
 
+        /**
+         * 移除本连接设置的所有watcher
+         * ---因为wathcer对象就是cnxn对象本身
+         */
         if (zkServer != null) {
             zkServer.removeCnxn(this);
         }
@@ -725,6 +735,9 @@ public class NIOServerCnxn extends ServerCnxn {
         // The last parameter OpCode here is used to select the response cache.
         // Passing OpCode.error (with a value of -1) means we don't care, as we don't need
         // response cache on delivering watcher events.
+        /**
+         * 发送响应
+         */
         int responseSize = sendResponse(h, e, "notification", null, null, ZooDefs.OpCode.error);
         ServerMetrics.getMetrics().WATCH_BYTES.add(responseSize);
     }

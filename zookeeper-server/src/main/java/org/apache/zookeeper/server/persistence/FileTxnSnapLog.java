@@ -525,9 +525,15 @@ public class FileTxnSnapLog {
         ConcurrentHashMap<Long, Integer> sessionsWithTimeouts,
         boolean syncSnap) throws IOException {
         long lastZxid = dataTree.lastProcessedZxid;
+        /**
+         * 文件名：snapshot.zxid
+         */
         File snapshotFile = new File(snapDir, Util.makeSnapshotName(lastZxid));
         LOG.info("Snapshotting: 0x{} to {}", Long.toHexString(lastZxid), snapshotFile);
         try {
+            /**
+             * 写入db的内容
+             */
             snapLog.serialize(dataTree, sessionsWithTimeouts, snapshotFile, syncSnap);
         } catch (IOException e) {
             if (snapshotFile.length() == 0) {

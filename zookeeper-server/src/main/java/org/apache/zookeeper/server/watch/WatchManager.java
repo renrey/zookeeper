@@ -29,6 +29,7 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.EventType;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
+import org.apache.zookeeper.server.NIOServerCnxn;
 import org.apache.zookeeper.server.ServerCnxn;
 import org.apache.zookeeper.server.ServerMetrics;
 import org.apache.zookeeper.server.ZooTrace;
@@ -121,9 +122,11 @@ public class WatchManager implements IWatchManager {
 
     @Override
     public WatcherOrBitSet triggerWatch(String path, EventType type, WatcherOrBitSet supress) {
+        // 创建WatchedEvent对象，参数：变更类型type、节点path
         WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
         Set<Watcher> watchers = new HashSet<>();
         PathParentIterator pathParentIterator = getPathParentIterator(path);
+        // 2. 查找所有匹配的wathcer
         synchronized (this) {
             for (String localPath : pathParentIterator.asIterable()) {
                 Set<Watcher> thisWatchers = watchTable.get(localPath);
@@ -160,7 +163,10 @@ public class WatchManager implements IWatchManager {
             }
             return null;
         }
-
+        /**
+         * 3.每个关联watcher（ServerNioCnxn连接对象）都执行通知操作：发送notification响应
+         * @see NIOServerCnxn#process(org.apache.zookeeper.WatchedEvent)
+         */
         for (Watcher w : watchers) {
             if (supress != null && supress.contains(w)) {
                 continue;

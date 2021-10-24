@@ -117,6 +117,9 @@ public class FinalRequestProcessor implements RequestProcessor {
         // was not being queued — ZOOKEEPER-558) properly. This happens, for example,
         // when the client closes the connection. The server should still close the session, though.
         // Calling closeSession() after losing the cnxn, results in the client close session response being dropped.
+        /**
+         * 自动过期、其他server转发的关闭
+         */
         if (request.type == OpCode.closeSession && connClosedByClient(request)) {
             // We need to check if we can close the session id.
             // Sometimes the corresponding ServerCnxnFactory could be null because
@@ -162,6 +165,10 @@ public class FinalRequestProcessor implements RequestProcessor {
         if (!request.isThrottled()) {
           rc = applyRequest(request);
         }
+        /**
+         * follower转发的请求，直接返回，不用响应
+         * ---因为到这里的已经commit成功，只要对应的follower收到commit报文，执行对应的请求即可
+         */
         if (request.cnxn == null) {
             return;
         }
@@ -218,13 +225,15 @@ public class FinalRequestProcessor implements RequestProcessor {
              * 1. 不同操作的处理
              */
             switch (request.type) {
+                // 客户端ping心跳
             case OpCode.ping: {
                 lastOp = "PING";
                 updateStats(request, lastOp, lastZxid);
-
+                // 响应PING_XID
                 responseSize = cnxn.sendResponse(new ReplyHeader(ClientCnxn.PING_XID, lastZxid, 0), null, "response");
                 return;
             }
+            // 响应新session创建给客户端
             case OpCode.createSession: {
                 lastOp = "SESS";
                 updateStats(request, lastOp, lastZxid);
@@ -382,6 +391,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 requestPathMetricsCollector.registerRequest(request.type, path);
                 break;
             }
+            // getData: 直接从db查找，然后返回即可
             case OpCode.getData: {
                 lastOp = "GETD";
                 GetDataRequest getDataRequest = new GetDataRequest();
@@ -645,7 +655,9 @@ public class FinalRequestProcessor implements RequestProcessor {
                         responseSize = cnxn.sendResponse(hdr, rsp, "response");
                 }
             }
-
+            /**
+             * 关闭session响应
+             */
             if (request.type == OpCode.closeSession) {
                 cnxn.sendCloseSession();
             }
@@ -672,12 +684,16 @@ public class FinalRequestProcessor implements RequestProcessor {
     private Record handleGetDataRequest(Record request, ServerCnxn cnxn, List<Id> authInfo) throws KeeperException, IOException {
         GetDataRequest getDataRequest = (GetDataRequest) request;
         String path = getDataRequest.getPath();
+        // 获取DataNode
         DataNode n = zks.getZKDatabase().getNode(path);
+        // 空节点校验
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
         zks.checkACL(cnxn, zks.getZKDatabase().aclForNode(n), ZooDefs.Perms.READ, authInfo, path, null);
         Stat stat = new Stat();
+        // getData，这里还会设置watcher
+        // 注意：watcher对象就是ServerCnxn连接对象本身
         byte[] b = zks.getZKDatabase().getData(path, stat, getDataRequest.getWatch() ? cnxn : null);
         return new GetDataResponse(b, stat);
     }

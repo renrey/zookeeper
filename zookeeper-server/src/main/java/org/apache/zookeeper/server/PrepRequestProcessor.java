@@ -323,6 +323,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      */
     protected void pRequest2Txn(int type, long zxid, Request request, Record record, boolean deserialize) throws KeeperException, IOException, RequestProcessorException {
         if (request.getHdr() == null) {
+            // clientId = sessionId
             request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
                     Time.currentWallTime(), type));
         }
@@ -372,6 +373,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.DELETE, request.authInfo, path, null);
             ChangeRecord nodeRecord = getRecordForPath(path);
             checkAndIncVersion(nodeRecord.stat.getVersion(), deleteRequest.getVersion(), path);
+            /**
+             * 检验是否有子节点
+             */
             if (nodeRecord.childCount > 0) {
                 throw new KeeperException.NotEmptyException(path);
             }
@@ -389,6 +393,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             addChangeRecord(nodeRecord);
             break;
         case OpCode.setData:
+            // 校验session可用
             zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
             SetDataRequest setDataRequest = (SetDataRequest) record;
             if (deserialize) {
@@ -399,8 +404,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             nodeRecord = getRecordForPath(path);
             zks.checkACL(request.cnxn, nodeRecord.acl, ZooDefs.Perms.WRITE, request.authInfo, path, null);
             zks.checkQuota(path, nodeRecord.data, setDataRequest.getData(), OpCode.setData);
+            // 生成新version ： +1
             int newVersion = checkAndIncVersion(nodeRecord.stat.getVersion(), setDataRequest.getVersion(), path);
             request.setTxn(new SetDataTxn(path, setDataRequest.getData(), newVersion));
+            // 设置新属性
             nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
             nodeRecord.stat.setVersion(newVersion);
             nodeRecord.stat.setMtime(request.getHdr().getTime());
@@ -586,6 +593,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new CreateSessionTxn(to));
             request.request.rewind();
             // only add the global session tracker but not to ZKDb
+            /**
+             * 1。session加入到sessionTracker中（可以leader管理）
+             * 2。更新session的owner：
+             *   （1）转发：对应连接的learnerHandler
+             *    (2) leader：固定的静态对象
+             */
             zks.sessionTracker.trackSession(request.sessionId, to);
             zks.setOwner(request.sessionId, request.getOwner());
             break;
@@ -691,7 +704,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         ChangeRecord parentRecord = getRecordForPath(parentPath);
 
         zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.CREATE, request.authInfo, path, listACL);
+        // 父节点的创建版本,Cversion
         int parentCVersion = parentRecord.stat.getCversion();
+        /**
+         * 顺序节点设置path：原path+序号
+         * 序号：10位，父节点的cversion
+         */
         if (createMode.isSequential()) {
             path = path + String.format(Locale.ENGLISH, "%010d", parentCVersion);
         }
@@ -707,8 +725,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         if (ephemeralParent) {
             throw new KeeperException.NoChildrenForEphemeralsException(path);
         }
+        // 得到parent新的cversion（原+1）
         int newCversion = parentRecord.stat.getCversion() + 1;
         zks.checkQuota(path, null, data, OpCode.create);
+        /**
+         * 创建Txn对象
+         */
         if (type == OpCode.createContainer) {
             request.setTxn(new CreateContainerTxn(path, data, listACL, newCversion));
         } else if (type == OpCode.createTTL) {
@@ -717,6 +739,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new CreateTxn(path, data, listACL, createMode.isEphemeral(), newCversion));
         }
 
+        /**
+         * 设置临时节点的拥有者ephemeralOwner
+         */
         TxnHeader hdr = request.getHdr();
         long ephemeralOwner = 0;
         if (createMode.isContainer()) {
@@ -783,11 +808,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.setTxn(null);
 
         /**
-         * 重新设置header 和 txn：
-         * 1. 生成zxid，hxzid自增！！！（header）
-         * 2. 只有write请求才会生成
+         * 重新设置header 和 转换 txn（请求实际对象）：
+         * 1. 校验session有效！！！！！
+         * 2. 生成zxid，hxzid自增！！！（header）
+         * 4. 这个过期中会生成 znode 的新属性，如新zxid、mzxid、version等
          *
-         * 注意：后面就依靠是否空，来判断是write还是read
+         * read请求只是校验session是否存在
+         *
+         * 注意：
+         * 1)只有write请求才会生成, 后面就依靠header是否空，来判断是write还是read
          */
         if (!request.isThrottled()) {
           pRequestHelper(request);
@@ -1013,6 +1042,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } catch (IllegalArgumentException e) {
             throw new BadArgumentsException(path);
         }
+        /**
+         * 临时节点校验session有效、owner是否当前session
+         */
         if (createMode.isEphemeral()) {
             // Exception is set when local session failed to upgrade
             // so we just need to report the error
@@ -1021,6 +1053,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             }
             zks.sessionTracker.checkGlobalSession(request.sessionId, request.getOwner());
         } else {
+            // 校验连接session有效
             zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
         }
     }

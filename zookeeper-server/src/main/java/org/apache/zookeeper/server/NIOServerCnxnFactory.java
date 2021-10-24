@@ -468,7 +468,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             // connection
             cnxn.disableSelectable();
             key.interestOps(0);
-            // 更新session过期时间
+            // 提交worker池处理前，更新连接过期时间
+            // 等于每次有io操作，都会先更新过期时间，在后面每个io操作完成也会更新一次
             touchCnxn(cnxn);
             // 提交任务
             workerPool.schedule(workRequest);
@@ -558,7 +559,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     selectorThread.cleanupSelectionKey(key);
                     return;
                 }
-                // 延长连接的过期时间（非session）
+                // 处理完io操作后（发送、读取），更新连接的过期时间（非session）
                 touchCnxn(cnxn);
             }
 
@@ -672,13 +673,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         maxClientCnxns = maxcc;
         // 最大连接数
         initMaxCnxns();
-        // session过期时间
+        // session过期时间，10s
         sessionlessCnxnTimeout = Integer.getInteger(ZOOKEEPER_NIO_SESSIONLESS_CNXN_TIMEOUT, 10000);
         // We also use the sessionlessCnxnTimeout as expiring interval for
         // cnxnExpiryQueue. These don't need to be the same, but the expiring
         // interval passed into the ExpiryQueue() constructor below should be
         // less than or equal to the timeout.
-        // 过期队列
+        // 过期队列, 10s
         cnxnExpiryQueue = new ExpiryQueue<NIOServerCnxn>(sessionlessCnxnTimeout);
         // 检查过期的线程
         expirerThread = new ConnectionExpirerThread();
@@ -880,6 +881,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      * @param cnxn
      */
     public void touchCnxn(NIOServerCnxn cnxn) {
+        // 延长10s
         cnxnExpiryQueue.update(cnxn, cnxn.getSessionTimeout());
     }
 

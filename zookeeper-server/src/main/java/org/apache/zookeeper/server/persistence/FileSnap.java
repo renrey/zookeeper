@@ -269,6 +269,9 @@ public class FileSnap implements SnapShot {
             try (CheckedOutputStream snapOS = SnapStream.getOutputStream(snapShot, fsync)) {
                 OutputArchive oa = BinaryOutputArchive.getArchive(snapOS);
                 FileHeader header = new FileHeader(SNAP_MAGIC, VERSION, dbId);
+                /**
+                 * FileHeader + session + tree (acl + datatree)
+                 */
                 serialize(dt, sessions, oa, header);
                 SnapStream.sealStream(snapOS, oa);
 

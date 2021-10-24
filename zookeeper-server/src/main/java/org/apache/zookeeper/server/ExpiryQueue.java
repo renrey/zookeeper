@@ -39,18 +39,23 @@ public class ExpiryQueue<E> {
      * The maximum number of buckets is equal to max timeout/expirationInterval,
      * so the expirationInterval should not be too small compared to the
      * max timeout that this expiry queue needs to maintain.
+     * key- 执行过期时间戳，v-这个时间执行过期的元素
      */
     private final ConcurrentHashMap<Long, Set<E>> expiryMap = new ConcurrentHashMap<Long, Set<E>>();
 
     private final AtomicLong nextExpirationTime = new AtomicLong();
+    // 过期间隔，默认tickTime，3000（3s）
     private final int expirationInterval;
 
     public ExpiryQueue(int expirationInterval) {
+        // 就是ticketTime ：3s
         this.expirationInterval = expirationInterval;
         nextExpirationTime.set(roundToNextInterval(Time.currentElapsedTime()));
     }
 
     private long roundToNextInterval(long time) {
+        // 保证某个时间范围内的时间点 最后都是同一个时间点
+        // 其实就是 时间戳一定是expirationInterval的倍数，就是一定是3s的倍数
         return (time / expirationInterval + 1) * expirationInterval;
     }
 
@@ -84,6 +89,13 @@ public class ExpiryQueue<E> {
     public Long update(E elem, int timeout) {
         Long prevExpiryTime = elemMap.get(elem);
         long now = Time.currentElapsedTime();
+        /**
+         * 1。得出这个任务实际执行过期（程序中）的时间点
+         * now + timeout ：得出准确的超时时间点
+         * 而newExpiryTime 是 实际执行清除的时间，（time/tickTime + 1） * tickTime, 保证某个时间区间过期的元素都在同一个点过期
+         * 过期执行的实际时间肯定是3000（tickTime）的倍数
+         * 分桶执行！！！
+         */
         Long newExpiryTime = roundToNextInterval(now + timeout);
 
         if (newExpiryTime.equals(prevExpiryTime)) {
@@ -92,6 +104,10 @@ public class ExpiryQueue<E> {
         }
 
         // First add the elem to the new expiry time bucket in expiryMap.
+        /**
+         * 2。获取newExpiryTime的元素集合，加入到这个集合中
+         * 用于这个时间点过期的元素
+         */
         Set<E> set = expiryMap.get(newExpiryTime);
         if (set == null) {
             // Construct a ConcurrentHashSet using a ConcurrentHashMap
@@ -107,7 +123,14 @@ public class ExpiryQueue<E> {
 
         // Map the elem to the new expiry time. If a different previous
         // mapping was present, clean up the previous expiry bucket.
+        /**
+         * 3。把这个任务放入elemMap，并且更新它的下次过期执行时间为newExpiryTime
+         * 用于记录，可以直接获取任务的过期时间
+         */
         prevExpiryTime = elemMap.put(elem, newExpiryTime);
+        /**
+         * 4。把任务从上一个过期时间的集合中删除
+         */
         if (prevExpiryTime != null && !newExpiryTime.equals(prevExpiryTime)) {
             Set<E> prevSet = expiryMap.get(prevExpiryTime);
             if (prevSet != null) {
@@ -142,7 +165,12 @@ public class ExpiryQueue<E> {
         }
 
         Set<E> set = null;
+        // 计算下一个过期时间
         long newExpirationTime = expirationTime + expirationInterval;
+        /**
+         * 1.更新newExpirationTime下一个过期时间，其实就是加上tickTime,
+         * 2. 从expiryMap取出（删除）当前点过期的集合，然后返回
+         */
         if (nextExpirationTime.compareAndSet(expirationTime, newExpirationTime)) {
             set = expiryMap.remove(expirationTime);
         }

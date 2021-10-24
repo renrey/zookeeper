@@ -235,8 +235,11 @@ public class FileTxnLog implements TxnLog, Closeable {
      */
     public synchronized void rollLog() throws IOException {
         if (logStream != null) {
+            // 把buffer内的缓存flush到页缓存
             this.logStream.flush();
+            // +上当前log在磁盘的大小（就是之前flush的fileHeader）
             prevLogsRunningTotal += getCurrentLogSize();
+            // logStream、oa指向清空
             this.logStream = null;
             oa = null;
 
@@ -293,25 +296,41 @@ public class FileTxnLog implements TxnLog, Closeable {
             logStream = new BufferedOutputStream(fos);
             oa = BinaryOutputArchive.getArchive(logStream);
             FileHeader fhdr = new FileHeader(TXNLOG_MAGIC, VERSION, dbId);
+            /**
+             * 一个log文件的一开始是fileheader
+             */
             fhdr.serialize(oa, "fileheader");
             // Make sure that the magic number is written before padding.
-            // 保证fileheader写入磁盘
+            // 保证fileheader已经write进流中，而不是部分缓存Buffer流的数组中
             logStream.flush();
 
             // log file当前的长度（字节） 更新到filePadding
             filePadding.setCurrentSize(fos.getChannel().position());
+
             // streamsToFlush保存原始文件流
             streamsToFlush.add(fos);
         }
+        /**
+         * 如果连续写入，直接到这里，不会生成新的log文件，而继续写入txn
+         */
+
         filePadding.padFile(fos.getChannel());
+        /**
+         * 生成一个txn的内容
+         */
         byte[] buf = Util.marshallTxnEntry(hdr, txn, digest);
         if (buf == null || buf.length == 0) {
             throw new IOException("Faulty serialization for header " + "and txn");
         }
-        // 计算crc，然后写入流中
+        /**
+         * 实际一个请求的txn写入内容为：
+         * crc（checksum） + txnHeader + txn + txnDigest + 0x42
+         */
+        // 计算crc，然后写入crc
         Checksum crc = makeChecksumAlgorithm();
         crc.update(buf, 0, buf.length);
         oa.writeLong(crc.getValue(), "txnEntryCRC");
+        // 写入内容
         Util.writeTxnBytes(oa, buf);
 
         return true;
@@ -399,14 +418,20 @@ public class FileTxnLog implements TxnLog, Closeable {
      * disk
      */
     public synchronized void commit() throws IOException {
+        // 把buffer流的缓存数组通过write写入页缓存
         if (logStream != null) {
             logStream.flush();
         }
         for (FileOutputStream log : streamsToFlush) {
+            // 安全起见，实际没代码
             log.flush();
             if (forceSync) {
                 long startSyncNS = System.nanoTime();
 
+                /**
+                 * 强制刷盘（落盘）：fsync
+                 * 这里才会使字节数组写入到磁盘（从内存的OS cache，因为write首先是进入页缓存，后面再定时写入磁盘）
+                 */
                 FileChannel channel = log.getChannel();
                 channel.force(false);
 
@@ -427,6 +452,7 @@ public class FileTxnLog implements TxnLog, Closeable {
                 ServerMetrics.getMetrics().FSYNC_TIME.add(syncElapsedMS);
             }
         }
+        // 关闭流
         while (streamsToFlush.size() > 1) {
             streamsToFlush.poll().close();
         }

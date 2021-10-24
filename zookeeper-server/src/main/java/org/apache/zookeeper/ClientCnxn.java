@@ -915,6 +915,7 @@ public class ClientCnxn {
             // 根据xid判断请求的类型
             switch (replyHdr.getXid()) {
             case PING_XID:
+                // 单纯为了更新lastHeard
                 LOG.debug("Got ping response for session id: 0x{} after {}ms.",
                     Long.toHexString(sessionId),
                     ((System.nanoTime() - lastPingSentNs) / 1000000));
@@ -1256,7 +1257,8 @@ public class ClientCnxn {
             while (state.isAlive()) {
                 try {
                     /**
-                     * socket未建立，创建socket
+                     * 1。 第一次socket未建立，创建socket
+                     * 2。 如果其他异常（请求or连接超时），导致连接关闭，也会重新建立连接
                      */
                     if (!clientCnxnSocket.isConnected()) {
                         // don't re-establish connection if we are closing
@@ -1280,7 +1282,7 @@ public class ClientCnxn {
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
                     /**
-                     * socket 已经建立，发送
+                     * 计算剩余时间
                      */
                     if (state.isConnected()) {
                         // determine whether we need to send an AuthFailed event.
@@ -1322,10 +1324,14 @@ public class ClientCnxn {
                          */
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
-                        // 计算剩余超时时间
+                        /**
+                         * 建立连接剩余时间
+                          */
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
-                    // 超时
+                    /**
+                     * 连接超时or读取请求超时，抛出超时异常，然后继续重试（与下一个server重新建立连接）
+                     */
                     if (to <= 0) {
                         String warnInfo = String.format(
                             "Client session timed out, have not heard from server in %dms for session id 0x%s",
@@ -1334,14 +1340,26 @@ public class ClientCnxn {
                         LOG.warn(warnInfo);
                         throw new SessionTimeoutException(warnInfo);
                     }
+
+                    /**
+                     * client发送ping心跳给server
+                     */
                     if (state.isConnected()) {
                         //1000(1 second) is to prevent race condition missing to send the second ping
                         //also make sure not to send too many pings when readTimeout is small
+                        /**
+                         * 距离下一次ping的时间
+                         * readTimeout / 2 - 空闲时间（上次收到server报文）- sec
+                         * sec：空闲时间超过1s，就1000，不超过就0
+                         */
                         int timeToNextPing = readTimeout / 2
                                              - clientCnxnSocket.getIdleSend()
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
+                            /**
+                             * 发送心跳
+                             */
                             sendPing();
                             clientCnxnSocket.updateLastSend();
                         } else {
@@ -1369,6 +1387,10 @@ public class ClientCnxn {
                      */
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
+                    /**
+                     * 除了正确关闭（close），
+                     * 其他异常（请求连接超时、网络io异常）执行cleanAndNotifyState后继续循环！！！
+                     */
                     if (closing) {
                         // closing so this is expected
                         LOG.warn(
@@ -1386,17 +1408,22 @@ public class ClientCnxn {
 
                         // At this point, there might still be new packets appended to outgoingQueue.
                         // they will be handled in next connection or cleared up if closed.
+                        // 处理
                         cleanAndNotifyState();
                     }
                 }
             }
-
+            // 上面的正常关闭，执行清空
             synchronized (state) {
                 // When it comes to this point, it guarantees that later queued
                 // packet to outgoingQueue will be notified of death.
                 cleanup();
             }
+            // 关闭selector
             clientCnxnSocket.close();
+            /**
+             * 触发全局watcher
+             */
             if (state.isAlive()) {
                 eventThread.queueEvent(new WatchedEvent(Event.EventType.None, Event.KeeperState.Disconnected, null));
             }
@@ -1471,7 +1498,7 @@ public class ClientCnxn {
         }
 
         private void cleanup() {
-            // 1. 断开连接
+            // 1. 断开连接，sockKey=null
             clientCnxnSocket.cleanup();
             // 2. 完成已发送的请求，完成
             synchronized (pendingQueue) {
@@ -1528,6 +1555,7 @@ public class ClientCnxn {
             readTimeout = negotiatedSessionTimeout * 2 / 3;
             connectTimeout = negotiatedSessionTimeout / hostProvider.size();
             hostProvider.onConnected();
+            // 后面转移到其他server也是这个sessionId
             sessionId = _sessionId;
             sessionPasswd = _sessionPasswd;
             changeZkState((isRO) ? States.CONNECTEDREADONLY : States.CONNECTED);

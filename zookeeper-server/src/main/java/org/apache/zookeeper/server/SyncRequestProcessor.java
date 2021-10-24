@@ -29,6 +29,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import org.apache.zookeeper.common.Time;
+import org.apache.zookeeper.server.quorum.SendAckRequestProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -146,8 +147,15 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private boolean shouldSnapshot() {
+        // 当前db使用的log文件的txn请求 数量
         int logCount = zks.getZKDatabase().getTxnCount();
+        // 当前log文件大小
         long logSize = zks.getZKDatabase().getTxnSize();
+        /**
+         * 符合任一条件就能快照
+         * 1。txn请求数量 > （SNAPCOUNT /2 + 随机数） ， SNAPCOUNT默认100000，随机数是SNAPCOUNT /2以内的，就是不超过SNAPCOUNT
+         * 2。log文件大小 >  (snapSizeInBytes/2 + 随机数) snapSizeInBytes默认4GB，随机数也是snapSizeInBytes/2以内的
+         */
         return (logCount > (snapCount / 2 + randRoll))
                || (snapSizeInBytes > 0 && logSize > (snapSizeInBytes / 2 + randSize));
     }
@@ -199,14 +207,26 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 // track the number of records written to the log
                 /**
-                 * append：尝试向本地的db新增这条请求日志(创建log.zxid的log文件，此时是写入缓冲区，并未刷盘)
+                 * append：尝试向本地的db新增这条请求日志(把请求并写入当前log文件os cache，并未刷盘，如果当前未有指定的log文件，创建log.zxid的log文件，)
+                 *
+                 * 如果连续写入，是不会创建新的log文件，而是继续写在原来的log
                   */
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
+                    // 写入log的字节流后，判断是否需要生成快照
                     if (shouldSnapshot()) {
+                        // 重新生成快照的随机数参数
                         resetSnapshotStats();
                         // roll the log
+                        /**
+                         * 需要生成快照，把当前log的缓存先flush到页缓存，对这个log的流引用清除
+                         * rollLog就是需要创建新的log文件前，对现有log的处理工作,代表需要新建log
+                         * 切换log文件的前置！！！
+                         */
                         zks.getZKDatabase().rollLog();
                         // take a snapshot
+                        /**
+                         * 启动一个线程去生成快照，如果有线程在生成，就不会执行
+                         */
                         if (!snapThreadMutex.tryAcquire()) {
                             LOG.warn("Too busy to snap, skipping");
                         } else {
@@ -223,23 +243,20 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                             }.start();
                         }
                     }
-                // 这里是ack响应才会进来
                     /**
                      * read请求（append返回false）且前面没有待flush的write(toFlush.isEmpty())
                      * 为啥判断有没有待flush？为了请求顺序执行，flush执行了，才会执行读
+                     *
+                     * 可忽略：leader在Proposal时已判断非write不会进入，follower进来这里前处理的就是write
                      */
                 } else if (toFlush.isEmpty()) {
                     // optimization for read heavy workloads
                     // iff this is a read or a throttled request(which doesn't need to be written to the disk),
                     // and there are no pending flushes (writes), then just pass this to the next processor
                     /**
-                     * leaderZookeeperServer : AckRequestProcessor (上一个为ProposalRequestProcessor)
-                     *    主要处理接收到ack响应
-                     * ZookeeperServer： FinalRequestProcessor （上一个PrepRequestProcessor）
-                     *    主要写入zk数据库
+                     * follower
                      *
-                     * @see org.apache.zookeeper.server.quorum.AckRequestProcessor#processRequest
-                     * @see FinalRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+                     * @see SendAckRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
                      */
                     if (nextProcessor != null) {
                         nextProcessor.processRequest(si);
@@ -250,14 +267,14 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     continue;
                 }
                 /**
-                 * 放入toFlush (待刷盘队列) ：
+                 * 放入toFlush (待刷盘的请求队列) ：
                  * 1. write请求
-                 * 2. 前面有待flush的write（保证执行顺序）
+                 * 2. 前面有待flush的read（保证执行顺序）
                  */
                 toFlush.add(si);
                 /**
-                 * 判断是否可以flush刷盘：
-                 * 1. toFlush数量等于1000
+                 * 判断是否可以flush刷盘(请求内容刷盘)：
+                 * 1. toFlush请求数量等于1000
                  * 2. 是否超时（但默认没开启）
                  */
                 if (shouldFlush()) {
@@ -285,7 +302,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
         long flushStartTime = Time.currentElapsedTime();
         /**
-         * 1. 字节流的flush
+         * 1. 把toFlush的log原始文件流强制刷盘（fsync），确保文件内容已写入磁盘
+         * 通过FileChannel.force实现
          */
         zks.getZKDatabase().commit();
         ServerMetrics.getMetrics().SYNC_PROCESSOR_FLUSH_TIME.add(Time.currentElapsedTime() - flushStartTime);
@@ -293,6 +311,17 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         if (this.nextProcessor == null) {
             this.toFlush.clear();
         } else {
+            /**
+             * 对每个已经刷盘的请求Proposal按顺序执行下一个Processor
+             *
+             * leader：
+             * 实际在ProposalProcessor定义的
+             * 作用是在log刷盘后，往当前Proposal的ackset添加本节点的ack（leader的ack），代表log写入完成
+             * @see org.apache.zookeeper.server.quorum.AckRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+             * follower
+             * 发送ack请求给leader
+             * @see SendAckRequestProcessor#processRequest(org.apache.zookeeper.server.Request)
+             */
             while (!this.toFlush.isEmpty()) {
                 final Request i = this.toFlush.remove();
                 long latency = Time.currentElapsedTime() - i.syncQueueStartTime;

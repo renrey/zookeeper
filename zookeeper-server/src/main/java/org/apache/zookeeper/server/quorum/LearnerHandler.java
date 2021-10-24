@@ -737,7 +737,7 @@ public class LearnerHandler extends ZooKeeperThread {
                     syncLimitCheck.updateAck(qp.getZxid());
                     // leader处理ack
                     /**
-                     * leader：
+                     * 如果刚好过半
                      * @see org.apache.zookeeper.server.quorum.Leader#processAck(long, long, java.net.SocketAddress)
                      */
                     learnerMaster.processAck(this.sid, qp.getZxid(), sock.getLocalSocketAddress());
@@ -756,20 +756,26 @@ public class LearnerHandler extends ZooKeeperThread {
                         // timeout
                         int to = dis.readInt();
                         /**
-                         * 更新session
+                         * 更新对应session过期时间点
                          */
                         learnerMaster.touch(sess, to);
                     }
                     break;
+                    /**
+                     * session更换连接
+                     */
                 case Leader.REVALIDATE:
                     ServerMetrics.getMetrics().REVALIDATE_COUNT.add(1);
                     learnerMaster.revalidateSession(qp, this);
                     break;
                     /**
-                     * follower转发write请求
+                     * follower转发的write请求
                      */
                 case Leader.REQUEST:
                     bb = ByteBuffer.wrap(qp.getData());
+                    /**
+                     * 转发的sessionId是发送data时传过来的
+                     */
                     sessionId = bb.getLong();
                     cxid = bb.getInt();
                     type = bb.getInt();
@@ -780,6 +786,9 @@ public class LearnerHandler extends ZooKeeperThread {
                     } else {
                         si = new Request(null, sessionId, cxid, type, bb, qp.getAuthinfo());
                     }
+                    /**
+                     * 转发，owner变成learnerHandler
+                     */
                     si.setOwner(this);
                     learnerMaster.submitLearnerRequest(si);
                     requestsReceived.incrementAndGet();

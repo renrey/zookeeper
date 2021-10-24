@@ -151,6 +151,8 @@ public class DataTree {
 
     /**
      * This hashtable lists the paths of the ephemeral nodes of a session.
+     * session的临时节点完整path集合
+     * key-sessionId，v-临时节点完整path集合
      */
     private final Map<Long, HashSet<String>> ephemerals = new ConcurrentHashMap<Long, HashSet<String>>();
 
@@ -481,7 +483,12 @@ public class DataTree {
         int lastSlash = path.lastIndexOf('/');
         String parentName = path.substring(0, lastSlash);
         String childName = path.substring(lastSlash + 1);
+        /**
+         * 初始化节点状态stat
+         */
         StatPersisted stat = createStat(zxid, time, ephemeralOwner);
+
+        // 必须有父节点
         DataNode parent = nodes.get(parentName);
         if (parent == null) {
             throw new KeeperException.NoNodeException();
@@ -499,8 +506,11 @@ public class DataTree {
             // ACL map when loading the snapshot/txns from disk, like what
             // we did for the global sessions.
             Long longval = aclCache.convertAcls(acl);
-
+            /**
+             * 父节点的children集合加入当前节点的名字
+             */
             Set<String> children = parent.getChildren();
+            // 不能有重名的
             if (children.contains(childName)) {
                 throw new KeeperException.NodeExistsException();
             }
@@ -515,26 +525,39 @@ public class DataTree {
             // exist in the snapshot, so replay the creation might revert the
             // cversion and pzxid, need to check and only update when it's
             // larger.
+            /**
+             * 更新父节点的Cversion+1, pzxid
+             * --- 创建createTxn时，parentCVersion = 当前CVersion+1
+             */
             if (parentCVersion > parent.stat.getCversion()) {
                 parent.stat.setCversion(parentCVersion);
                 parent.stat.setPzxid(zxid);
             }
+            /**
+             * 创建当前节点的DataNode对象
+             */
             DataNode child = new DataNode(data, longval, stat);
             parent.addChild(childName);
             nodes.postChange(parentName, parent);
             nodeDataSize.addAndGet(getNodeSize(path, child.data));
+            // 把DataNode放入nodes中，指定自己绝对路径
             nodes.put(path, child);
             EphemeralType ephemeralType = EphemeralType.get(ephemeralOwner);
             if (ephemeralType == EphemeralType.CONTAINER) {
                 containers.add(path);
             } else if (ephemeralType == EphemeralType.TTL) {
                 ttls.add(path);
+                /**
+                 * 一般临时节点执行, 把节点的path放入ephemerals -map中，key为owner（也就是clientId）
+                  */
             } else if (ephemeralOwner != 0) {
+                // 获取session的临时节点path集合
                 HashSet<String> list = ephemerals.get(ephemeralOwner);
                 if (list == null) {
                     list = new HashSet<String>();
                     ephemerals.put(ephemeralOwner, list);
                 }
+                // 集合存储完整path
                 synchronized (list) {
                     list.add(path);
                 }
@@ -563,6 +586,9 @@ public class DataTree {
             updateQuotaStat(lastPrefix, bytes, 1);
         }
         updateWriteStat(path, bytes);
+        /**
+         * 触发dataWatches、childWatches（父节点的）的watcher
+         */
         dataWatches.triggerWatch(path, Event.EventType.NodeCreated);
         childWatches.triggerWatch(parentName.equals("") ? "/" : parentName, Event.EventType.NodeChildrenChanged);
     }
@@ -590,20 +616,24 @@ public class DataTree {
         }
         synchronized (parent) {
             nodes.preChange(parentName, parent);
+            // 从父的DataNode移除
             parent.removeChild(childName);
             // Only update pzxid when the zxid is larger than the current pzxid,
             // otherwise we might override some higher pzxid set by a create
             // Txn, which could cause the cversion and pzxid inconsistent
+            // 更新pzxid
             if (zxid > parent.stat.getPzxid()) {
                 parent.stat.setPzxid(zxid);
             }
             nodes.postChange(parentName, parent);
         }
 
+        // 不存在会报错
         DataNode node = nodes.get(path);
         if (node == null) {
             throw new KeeperException.NoNodeException();
         }
+        // 从nodes移除
         nodes.remove(path);
         synchronized (node) {
             aclCache.removeUsage(node.acl);
@@ -620,6 +650,7 @@ public class DataTree {
                 containers.remove(path);
             } else if (ephemeralType == EphemeralType.TTL) {
                 ttls.remove(path);
+            // 临时节点，从ephemerals移除
             } else if (eowner != 0) {
                 Set<String> nodes = ephemerals.get(eowner);
                 if (nodes != null) {
@@ -660,6 +691,8 @@ public class DataTree {
                 "childWatches.triggerWatch " + parentName);
         }
 
+        // 触发watcher
+        // dataWatches(NodeDeleted)、childWatches(NodeDeleted、NodeChildrenChanged)
         WatcherOrBitSet processed = dataWatches.triggerWatch(path, EventType.NodeDeleted);
         childWatches.triggerWatch(path, EventType.NodeDeleted, processed);
         childWatches.triggerWatch("".equals(parentName) ? "/" : parentName, EventType.NodeChildrenChanged);
@@ -672,13 +705,14 @@ public class DataTree {
             throw new KeeperException.NoNodeException();
         }
         byte[] lastdata = null;
+        // 把在PreRequestProcessor生成的新属性更新上去
         synchronized (n) {
             lastdata = n.data;
             nodes.preChange(path, n);
             n.data = data;
-            n.stat.setMtime(time);
-            n.stat.setMzxid(zxid);
-            n.stat.setVersion(version);
+            n.stat.setMtime(time); // mtime
+            n.stat.setMzxid(zxid); // mzxid
+            n.stat.setVersion(version); // version版本+1
             n.copyStat(s);
             nodes.postChange(path, n);
         }
@@ -694,6 +728,7 @@ public class DataTree {
         nodeDataSize.addAndGet(getNodeSize(path, data) - getNodeSize(path, lastdata));
 
         updateWriteStat(path, dataBytes);
+        // dataWatches触发，并不会child
         dataWatches.triggerWatch(path, EventType.NodeDataChanged);
         return s;
     }
@@ -731,6 +766,9 @@ public class DataTree {
         }
         synchronized (n) {
             n.copyStat(stat);
+            /**
+             * 加入watcher，往DataTree的dataWatches对应path的watcher集合加入
+             */
             if (watcher != null) {
                 dataWatches.addWatch(path, watcher);
             }
@@ -758,6 +796,7 @@ public class DataTree {
 
     public List<String> getChildren(String path, Stat stat, Watcher watcher) throws KeeperException.NoNodeException {
         DataNode n = nodes.get(path);
+        // 空节点校验
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
@@ -767,7 +806,7 @@ public class DataTree {
                 n.copyStat(stat);
             }
             children = new ArrayList<String>(n.getChildren());
-
+            // child的watcher
             if (watcher != null) {
                 childWatches.addWatch(path, watcher);
             }
@@ -893,6 +932,7 @@ public class DataTree {
         ProcessTxnResult rc = new ProcessTxnResult();
 
         try {
+            // sessionId
             rc.clientId = header.getClientId();
             rc.cxid = header.getCxid();
             rc.zxid = header.getZxid();
@@ -907,8 +947,8 @@ public class DataTree {
                     createTxn.getPath(),
                     createTxn.getData(),
                     createTxn.getAcl(),
-                    createTxn.getEphemeral() ? header.getClientId() : 0,
-                    createTxn.getParentCVersion(),
+                    createTxn.getEphemeral() ? header.getClientId() : 0, // 临时节点，owner为当前client
+                    createTxn.getParentCVersion(), // 这里的是原来+1
                     header.getZxid(),
                     header.getTime(),
                     null);
@@ -983,11 +1023,15 @@ public class DataTree {
                 rc.path = setACLTxn.getPath();
                 rc.stat = setACL(setACLTxn.getPath(), setACLTxn.getAcl(), setACLTxn.getVersion());
                 break;
+                /**
+                 * 关闭session（手动关闭、过期关闭）
+                 */
             case OpCode.closeSession:
                 long sessionId = header.getClientId();
+                // 默认true
                 if (txn != null) {
                     killSession(sessionId, header.getZxid(),
-                            ephemerals.remove(sessionId),
+                            ephemerals.remove(sessionId), // 取出这个session的临时节点
                             ((CloseSessionTxn) txn).getPaths2Delete());
                 } else {
                     killSession(sessionId, header.getZxid());
@@ -1163,6 +1207,10 @@ public class DataTree {
         // so there is no need for synchronization. The list is not
         // changed here. Only create and delete change the list which
         // are again called from FinalRequestProcessor in sequence.
+        /**
+         * 1. 取出ephemerals中所有这个session的临时节点完整path
+         * 2. killSession
+         */
         killSession(session, zxid, ephemerals.remove(session), null);
     }
 
@@ -1189,15 +1237,21 @@ public class DataTree {
                     Long.toHexString(zxid));
             }
         }
-
+        /**
+         * 删除session的所有临时节点
+         */
         deleteNodes(session, zxid, paths2DeleteLocal);
     }
 
     void deleteNodes(long session, long zxid, Iterable<String> paths2Delete) {
+        /**
+         * 删除这里每个节点
+         */
         for (String path : paths2Delete) {
             boolean deleted = false;
             String sessionHex = "0x" + Long.toHexString(session);
             try {
+                // 删除单个节点
                 deleteNode(path, zxid);
                 deleted = true;
                 LOG.debug("Deleting ephemeral node {} for session {}", path, sessionHex);
@@ -1987,14 +2041,14 @@ public class DataTree {
      */
     public static StatPersisted createStat(long zxid, long time, long ephemeralOwner) {
         StatPersisted stat = new StatPersisted();
-        stat.setCtime(time);
-        stat.setMtime(time);
-        stat.setCzxid(zxid);
-        stat.setMzxid(zxid);
+        stat.setCtime(time); // 创建时间
+        stat.setMtime(time); // 修改时间
+        stat.setCzxid(zxid); // 创建的zxid
+        stat.setMzxid(zxid); // 修改zxid
         stat.setPzxid(zxid);
         stat.setVersion(0);
         stat.setAversion(0);
-        stat.setEphemeralOwner(ephemeralOwner);
+        stat.setEphemeralOwner(ephemeralOwner); // 临时节点的拥有者session，非临时就是0
         return stat;
     }
 }

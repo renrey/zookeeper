@@ -78,12 +78,7 @@ import org.apache.zookeeper.server.SessionTracker.SessionExpirer;
 import org.apache.zookeeper.server.auth.ProviderRegistry;
 import org.apache.zookeeper.server.auth.ServerAuthenticationProvider;
 import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
-import org.apache.zookeeper.server.quorum.CommitProcessor;
-import org.apache.zookeeper.server.quorum.Leader;
-import org.apache.zookeeper.server.quorum.LeaderRequestProcessor;
-import org.apache.zookeeper.server.quorum.ProposalRequestProcessor;
-import org.apache.zookeeper.server.quorum.QuorumPeerConfig;
-import org.apache.zookeeper.server.quorum.ReadOnlyZooKeeperServer;
+import org.apache.zookeeper.server.quorum.*;
 import org.apache.zookeeper.server.util.JvmPauseMonitor;
 import org.apache.zookeeper.server.util.OSMXBean;
 import org.apache.zookeeper.server.util.RequestPathMetricsCollector;
@@ -650,6 +645,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             "Expiring session 0x{}, timeout of {}ms exceeded",
             Long.toHexString(sessionId),
             session.getTimeout());
+        // 提交closeSession请求给requestThrottler（等于client自己发起了closeSession）
         close(sessionId);
     }
 
@@ -1042,6 +1038,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         r.nextBytes(passwd);
         ByteBuffer to = ByteBuffer.allocate(4);
         to.putInt(timeout);
+        // 保存sessionId到sessionMap，映射对应的连接对象
         cnxn.setSessionId(sessionId);
         /**
          * 提交createSession请求到RequestThrottler继续处理
@@ -1062,6 +1059,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     protected void revalidateSession(ServerCnxn cnxn, long sessionId, int sessionTimeout) throws IOException {
+        // 延长这个sessionId的过期时间
         boolean rc = sessionTracker.touchSession(sessionId, sessionTimeout);
         if (LOG.isTraceEnabled()) {
             ZooTrace.logTraceMessage(
@@ -1203,10 +1201,16 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
         }
         try {
-            // 1. 更新连接超时、session超时
+            /**
+             * 1. 更新连接超时、session超时
+             */
             touch(si.cnxn);
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
+                /**
+                 * 把session设为本地的，但默认不开启
+                 * @see QuorumZooKeeperServer#setLocalSessionFlag(org.apache.zookeeper.server.Request)
+                 */
                 setLocalSessionFlag(si);
                 /**
                  * 2. PrepRequestProcessor 处理请求
@@ -1508,6 +1512,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 Long.toHexString(connReq.getLastZxidSeen()),
                 connReq.getTimeOut(),
                 cnxn.getRemoteSocketAddress());
+        // 已有的session，就是这个client转移到其他server节点
         } else {
             validateSession(cnxn, sessionId);
             LOG.debug(
@@ -1516,13 +1521,27 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 Long.toHexString(connReq.getLastZxidSeen()),
                 connReq.getTimeOut(),
                 cnxn.getRemoteSocketAddress());
+            // 关闭当前节点对这个sessionId的原有session的连接
             if (serverCnxnFactory != null) {
                 serverCnxnFactory.closeSession(sessionId, ServerCnxn.DisconnectReason.CLIENT_RECONNECT);
             }
             if (secureServerCnxnFactory != null) {
                 secureServerCnxnFactory.closeSession(sessionId, ServerCnxn.DisconnectReason.CLIENT_RECONNECT);
             }
+            // 直接使用原来的sessionId
             cnxn.setSessionId(sessionId);
+            /**
+             * 尝试刷新这个session时间
+             * 如果失败，返回失败响应，然后client发起重新注册新的
+             *
+             * leader：
+             * 直接touch
+             * @see org.apache.zookeeper.server.ZooKeeperServer#revalidateSession(org.apache.zookeeper.server.ServerCnxn, long, int)
+             *
+             * follower：
+             * 发送REVALIDATE给leader，实际到leader那里也是touch
+             * @see org.apache.zookeeper.server.quorum.LearnerZooKeeperServer#revalidateSession(org.apache.zookeeper.server.ServerCnxn, long, int)
+             */
             reopenSession(cnxn, sessionId, passwd, sessionTimeout);
             ServerMetrics.getMetrics().CONNECTION_REVALIDATE_COUNT.add(1);
 
@@ -1732,6 +1751,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 // Already sent response to user about failure and closed the session, lets return
                 return;
             } else {
+                // session是从本地对应连接的ServerCnxn获取的
                 Request si = new Request(cnxn, cnxn.getSessionId(), h.getXid(), h.getType(), incomingBuffer, cnxn.getAuthInfo());
                 int length = incomingBuffer.limit();
                 if (isLargeRequest(length)) {
@@ -1742,6 +1762,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 si.setOwner(ServerCnxn.me);
                 // 提交Request ，入队
                 /**
+                 * 提交到RequestThrottler的队列
                  * 实际进入RequestProcessor的调用链
                  * @see org.apache.zookeeper.server.ZooKeeperServer#submitRequestNow(org.apache.zookeeper.server.Request)
                  */
@@ -1849,18 +1870,23 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     // entry point for FinalRequestProcessor.java
     public ProcessTxnResult processTxn(Request request) {
         TxnHeader hdr = request.getHdr();
+        /**
+         * 1. 执行session请求
+         */
         processTxnForSessionEvents(request, hdr, request.getTxn());
 
         final boolean writeRequest = (hdr != null);
+        // 一般read请求=false
         final boolean quorumRequest = request.isQuorum();
 
         // return fast w/o synchronization when we get a read
+        // read请求的直接返回，不用在这里执行
         if (!writeRequest && !quorumRequest) {
             return new ProcessTxnResult();
         }
         synchronized (outstandingChanges) {
             /**
-             * 1. 写入内存数据库！！！
+             * 2. 执行写入内存数据库的请求！！！write请求
              */
             ProcessTxnResult rc = processTxnInDB(hdr, request.getTxn(), request.getTxnDigest());
 
@@ -1886,7 +1912,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
             // do not add non quorum packets to the queue.
             /**
-             *  2. 新增commit 日志 （已commit 的 与最后commit的）
+             *  2. 记录新增commit日志 （已commit 的 与最后commit的），write请求，read不会加入
              */
             if (quorumRequest) {
                 getZKDatabase().addCommittedProposal(request);
@@ -1899,14 +1925,23 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         int opCode = (request == null) ? hdr.getType() : request.type;
         long sessionId = (request == null) ? hdr.getClientId() : request.sessionId;
 
+        // 新建session请求
         if (opCode == OpCode.createSession) {
             if (hdr != null && txn instanceof CreateSessionTxn) {
                 CreateSessionTxn cst = (CreateSessionTxn) txn;
+                /**
+                 * sessionsWithTimeout（sessionTracker、ZKDB） 加入这个sessionId 及它超时时长
+                 */
                 sessionTracker.commitSession(sessionId, cst.getTimeOut());
             } else if (request == null || !request.isLocalSession()) {
                 LOG.warn("*****>>>>> Got {} {}",  txn.getClass(), txn.toString());
             }
+        // 关闭session请求
         } else if (opCode == OpCode.closeSession) {
+            /**
+             * sessionTracker移除：
+             * sessionsWithTimeout、sessionById、过期队列
+             */
             sessionTracker.removeSession(sessionId);
         }
     }

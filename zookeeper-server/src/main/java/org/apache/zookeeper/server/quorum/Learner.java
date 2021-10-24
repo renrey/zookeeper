@@ -164,6 +164,9 @@ public class Learner {
         dos.writeLong(clientId);
         dos.writeInt(timeout);
         dos.close();
+        /**
+         * 发送REVALIDATE
+         */
         QuorumPacket qp = new QuorumPacket(Leader.REVALIDATE, -1, baos.toByteArray(), null);
         pendingRevalidations.put(clientId, cnxn);
         if (LOG.isTraceEnabled()) {
@@ -253,6 +256,7 @@ public class Learner {
         /**
          * 序列化的内容：
          * sessionId+cxid+type
+         * 转发请求需要带上sessionId！！！
          */
         DataOutputStream oa = new DataOutputStream(baos);
         oa.writeLong(request.sessionId);

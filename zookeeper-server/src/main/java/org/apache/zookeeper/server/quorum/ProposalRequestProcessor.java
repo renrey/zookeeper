@@ -74,7 +74,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
          * contain the handler. In this case, we add it to syncHandler, and
          * call processRequest on the next processor.
          */
-        // 同步给follower （learner），的请求
+        // sync操作（一般cli执行的）
         if (request instanceof LearnerSyncRequest) {
             zks.getLeader().processSync((LearnerSyncRequest) request);
         } else {
@@ -87,20 +87,19 @@ public class ProposalRequestProcessor implements RequestProcessor {
                 nextProcessor.processRequest(request);
             }
             /**
-             * 注意 这里是有3链路
-             * 1.CommitProcessor -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
-             *    这条分支做的是本节点的zk数据库处理
-             * 2. ProposalRequestProcessor（发送proposal给follower） -> syncProcessor（写入操作日志，刷盘，快照） -> AckRequestProcessor (处理ack响应)
-             *    这条分支负责proposal发布，proposal日志写入，ack响应处理 ，即同步相关的操作
+             *   实际流程如下
              *    1. CommitProcessor 提交到队列
              *    2. ProposalRequestProcessor.propose 给follower发送PROPOSAL
-             *    3. syncProcessor(请求log写入磁盘) -> AckRequestProcessor(等待过半响应)
-             *    4.  CommitProcessor -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
+             *    3. syncProcessor(请求log写入磁盘) -> AckRequestProcessor(加入ackset中)
+             *    如果过半后：
+             *    tryCommit （发送commit请求给所有follower、请求放到commit的队列） -> CommitProcessor(拿到已认为commit的请求)
+             *    -> ToApplied（删掉待执行的proposal） -> final(zk内存数据库处理)
              */
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
                 try {
                     /**
+                     * 注意：只有write请求才能发起proposal
                      * 创建proposal（注意zxid在上一步PreRequestProcessor已经生成）, 向其他follower发送PROPOSAL请求
                       */
                     zks.getLeader().propose(request);

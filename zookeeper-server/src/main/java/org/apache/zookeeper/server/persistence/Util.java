@@ -188,11 +188,16 @@ public class Util {
             throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         OutputArchive boa = BinaryOutputArchive.getArchive(baos);
-
+        /**
+         * 内容
+         * TxnHeader + Txn + TxnDigest
+         */
         hdr.serialize(boa, "hdr");
+        // type（int） + data
         if (txn != null) {
             txn.serialize(boa, "txn");
         }
+        // version （int）+  treeDigest（long）
         if (digest != null) {
             digest.serialize(boa, "digest");
         }
